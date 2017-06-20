@@ -1575,7 +1575,7 @@ static int arm_smmu_master_alloc_smes(struct device *dev)
 		idx = ret;
 		if (smrs && smmu->s2crs[idx].count == 0) {
 			smrs[idx].id = fwspec->ids[i];
-			smrs[idx].mask = 0; /* We don't currently share SMRs */
+			smrs[idx].mask = 0x7f80; /* We don't currently share SMRs */
 			smrs[idx].valid = true;
 		}
 		smmu->s2crs[idx].count++;
@@ -2179,7 +2179,8 @@ static void arm_smmu_device_reset(struct arm_smmu_device *smmu)
 	/* Enable client access, but bypass when no mapping is found */
 	reg &= ~(sCR0_CLIENTPD | sCR0_USFCFG);
 	/* Xen: Unlike Linux, generate a fault when no mapping is found */
-	reg |= sCR0_USFCFG;
+	/* Need to disable this, otherwise hang 8QM */
+	/*reg |= sCR0_USFCFG; */
 
 	/* Disable forced broadcasting */
 	reg &= ~sCR0_FB;
