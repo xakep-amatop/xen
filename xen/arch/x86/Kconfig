@@ -27,6 +27,7 @@ config X86
 	select HAS_VPCI if HVM
 	select NEEDS_LIBELF
 	select NUMA
+	select HAS_PM
 
 config ARCH_DEFCONFIG
 	string
