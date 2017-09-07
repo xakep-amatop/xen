@@ -44,7 +44,7 @@
 #include <asm/processor.h>
 
 #include <acpi/acpi.h>
-#include <acpi/cpufreq/cpufreq.h>
+#include <xen/cpufreq.h>
 
 static unsigned int __read_mostly usr_min_freq;
 static unsigned int __read_mostly usr_max_freq;
