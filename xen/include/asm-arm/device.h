@@ -20,6 +20,7 @@ struct device
 #endif
     struct dev_archdata archdata;
     struct iommu_fwspec *iommu_fwspec; /* per-device IOMMU instance data */
+    void *driver_data;
 };
 
 typedef struct device device_t;
