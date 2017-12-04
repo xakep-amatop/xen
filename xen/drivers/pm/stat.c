@@ -492,6 +492,8 @@ int do_pm_op(struct xen_sysctl_pm_op *op)
     return ret;
 }
 
+/* TODO Move x86 location */
+#ifdef CONFIG_ACPI /* or CONFIG_X86 ? */
 int acpi_set_pdc_bits(uint32_t acpi_id, XEN_GUEST_HANDLE(uint32) pdc)
 {
     u32 bits[3];
@@ -522,3 +524,4 @@ int acpi_set_pdc_bits(uint32_t acpi_id, XEN_GUEST_HANDLE(uint32) pdc)
 
     return ret;
 }
+#endif /* CONFIG_ACPI */
