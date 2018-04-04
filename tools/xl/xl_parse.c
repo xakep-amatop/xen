@@ -1585,6 +1585,13 @@ void parse_config_data(const char *config_source,
         }
     }
 
+    e = xlu_cfg_get_list_as_string_list(config, "dt_compatible",
+                                        &b_info->dt_compatible, 1);
+    if (e && e != ESRCH) {
+            fprintf(stderr,"xl: Unable to parse dt_compatible\n");
+            exit(-ERROR_FAIL);
+    }
+
     if (!xlu_cfg_get_list (config, "pci", &pcis, 0, 0)) {
         d_config->num_pcidevs = 0;
         d_config->pcidevs = NULL;
