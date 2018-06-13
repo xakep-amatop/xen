@@ -777,6 +777,9 @@ int arch_domain_create(struct domain *d,
     if ( (rc = domain_vpci_init(d)) != 0 )
         goto fail;
 
+    if (platform_domain_create(d, config))
+        goto fail;
+
     return 0;
 
 fail:
@@ -788,6 +791,7 @@ fail:
 
 void arch_domain_destroy(struct domain *d)
 {
+    platform_domain_destroy(d);
     /* IOMMU page table is shared with P2M, always call
      * iommu_domain_destroy() before p2m_teardown().
      */
