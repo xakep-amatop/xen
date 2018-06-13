@@ -34,6 +34,7 @@ struct platform_desc {
     void (*poweroff)(void);
     /* Platform specific SMC handler */
     bool (*smc)(struct cpu_user_regs *regs);
+    bool (*handle_hvc)(struct cpu_user_regs *regs);
     /*
      * Platform quirks
      * Defined has a function because a platform can support multiple
