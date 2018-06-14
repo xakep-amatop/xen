@@ -2,6 +2,7 @@
 # arm-specific definitions
 
 CFLAGS += -I$(BASEDIR)/include
+CFLAGS += -I$(BASEDIR)/include -I$(BASEDIR)/arch/arm/platforms/scfw_export_hyper
 
 $(call cc-options-add,CFLAGS,CC,$(EMBEDDED_EXTRA_CFLAGS))
 $(call cc-option-add,CFLAGS,CC,-Wnested-externs)
