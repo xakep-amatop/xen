@@ -30,8 +30,9 @@ int __must_check vpci_add_handlers(struct pci_dev *dev);
 
 /* Remove all handlers and free vpci related structures. */
 void vpci_remove_device(struct pci_dev *pdev);
+void vpci_remove_device_locked(struct pci_dev *pdev);
 
-/* Add/remove a register handler. */
+/* Add/remove a register handler. Must be called holding the vpci_lock. */
 int __must_check vpci_add_register(struct vpci *vpci,
                                    vpci_read_t *read_handler,
                                    vpci_write_t *write_handler,
@@ -60,7 +61,6 @@ bool __must_check vpci_process_pending(struct vcpu *v);
 struct vpci {
     /* List of vPCI handlers for a device. */
     struct list_head handlers;
-    spinlock_t lock;
 
 #ifdef __XEN__
     /* Hide the rest of the vpci struct from the user-space test harness. */
@@ -231,6 +231,7 @@ static inline int vpci_add_handlers(struct pci_dev *pdev)
 }
 
 static inline void vpci_remove_device(struct pci_dev *pdev) { }
+static inline void vpci_remove_device_locked(struct pci_dev *pdev) { }
 
 static inline void vpci_dump_msi(void) { }
 
