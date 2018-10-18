@@ -23,6 +23,7 @@
  * Xen modification:
  * Julien Grall <julien.grall@linaro.org>
  * Copyright (C) 2014 Linaro Limited.
+ * Copyright 2018 NXP
  *
  * This driver currently supports:
  *	- SMMUv1 and v2 implementations
@@ -632,6 +633,7 @@ struct arm_smmu_smr {
 struct arm_smmu_master_cfg {
 	struct arm_smmu_device		*smmu;
 	s16				smendx[MAX_MASTER_STREAMIDS];
+	bool				init_smmu_bypass;
 };
 #define INVALID_SMENDX			-1
 #define for_each_cfg_sme(cfg, i, idx, num) \
@@ -856,6 +858,12 @@ static int arm_smmu_dt_add_device_legacy(struct arm_smmu_device *smmu,
 		}
 		master->cfg.smendx[i] = INVALID_SMENDX;
 	}
+
+	if (dt_get_property(master->of_node, "init-smmu-bypass", NULL)) {
+		master->cfg.init_smmu_bypass = true;
+		printk("%s: smmu bypass\n", master->of_node->name);
+	}
+
 	return insert_smmu_master(smmu, master);
 }
 
@@ -1546,12 +1554,17 @@ static int arm_smmu_find_sme(struct arm_smmu_device *smmu, u16 id, u16 mask)
 	return free_idx;
 }
 
-static bool arm_smmu_free_sme(struct arm_smmu_device *smmu, int idx)
+static bool arm_smmu_free_sme(struct arm_smmu_device *smmu, int idx,
+                              bool init_smmu_bypass)
 {
 	if (--smmu->s2crs[idx].count)
 		return false;
 
 	smmu->s2crs[idx] = s2cr_init_val;
+
+	if (init_smmu_bypass)
+		smmu->s2crs[idx].type = S2CR_TYPE_BYPASS;
+
 	if (smmu->smrs)
 		smmu->smrs[idx].valid = false;
 
@@ -1593,7 +1606,7 @@ static int arm_smmu_master_alloc_smes(struct device *dev)
 
 out_err:
 	while (i--) {
-		arm_smmu_free_sme(smmu, cfg->smendx[i]);
+		arm_smmu_free_sme(smmu, cfg->smendx[i], cfg->init_smmu_bypass);
 		cfg->smendx[i] = INVALID_SMENDX;
 	}
 	spin_unlock(&smmu->stream_map_lock);
@@ -1608,7 +1621,7 @@ static void arm_smmu_master_free_smes(struct arm_smmu_master_cfg *cfg)
 
 	spin_lock(&smmu->stream_map_lock);
 	for_each_cfg_sme(cfg, i, idx, fwspec->num_ids) {
-		if (arm_smmu_free_sme(smmu, idx))
+		if (arm_smmu_free_sme(smmu, idx, cfg->init_smmu_bypass))
 			arm_smmu_write_sme(smmu, idx);
 		cfg->smendx[i] = INVALID_SMENDX;
 	}
