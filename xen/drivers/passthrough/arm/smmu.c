@@ -1588,11 +1588,6 @@ static int arm_smmu_master_alloc_smes(struct device *dev)
 		cfg->smendx[i] = (s16)idx;
 	}
 
-	/* It worked! Now, poke the actual hardware */
-	for_each_cfg_sme(cfg, i, idx, fwspec->num_ids) {
-		arm_smmu_write_sme(smmu, idx);
-	}
-
 	spin_unlock(&smmu->stream_map_lock);
 	return 0;
 
@@ -1638,6 +1633,11 @@ static int arm_smmu_domain_add_master(struct arm_smmu_domain *smmu_domain,
 		s2cr[idx].privcfg = S2CR_PRIVCFG_DEFAULT;
 		s2cr[idx].cbndx = cbndx;
 		arm_smmu_write_s2cr(smmu, idx);
+	}
+
+	/* It worked! Now, poke the actual hardware */
+	for_each_cfg_sme(cfg, i, idx, fwspec->num_ids) {
+		arm_smmu_write_sme(smmu, idx);
 	}
 	return 0;
 }
