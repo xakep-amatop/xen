@@ -4,6 +4,7 @@
 #include <xen/types.h>
 
 #include <asm/current.h>
+#include <asm/suspend.h>
 #include <asm/vgic.h>
 #include <asm/vpsci.h>
 #include <asm/event.h>
@@ -223,9 +224,10 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
     if ( is_64bit_domain(d) && is_thumb )
         return PSCI_INVALID_ADDRESS;
 
-    /* SYSTEM_SUSPEND is not supported for the hardware domain yet */
+#ifndef CONFIG_SYSTEM_SUSPEND
     if ( is_hardware_domain(d) )
         return PSCI_NOT_SUPPORTED;
+#endif
 
     /* Ensure that all CPUs other than the calling one are offline */
     domain_lock(d);
@@ -250,6 +252,14 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
     gprintk(XENLOG_DEBUG,
             "SYSTEM_SUSPEND requested, epoint=0x%"PRIregister", cid=0x%"PRIregister,
             epoint, cid);
+
+#ifdef CONFIG_SYSTEM_SUSPEND
+    if ( is_hardware_domain(d) && host_system_suspend() )
+    {
+        BUG_ON(1); /* host_system_suspend() should not return */
+        return PSCI_DENIED;
+    }
+#endif
 
     return rc;
 }
