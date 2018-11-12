@@ -24,10 +24,13 @@
 #include <asm/platform.h>
 #include <asm/procinfo.h>
 #include <asm/regs.h>
+#include <asm/suspend.h>
 #include <asm/tee/tee.h>
 #include <asm/vfp.h>
 #include <asm/vgic.h>
 #include <asm/vtimer.h>
+
+#include <public/sched.h>
 
 #include "vpci.h"
 #include "vuart.h"
@@ -858,8 +861,24 @@ void arch_domain_destroy(struct domain *d)
     domain_io_free(d);
 }
 
-void arch_domain_shutdown(struct domain *d)
+int arch_domain_shutdown(struct domain *d)
 {
+    switch ( d->shutdown_code )
+    {
+    case SHUTDOWN_suspend:
+#ifdef CONFIG_SYSTEM_SUSPEND
+        if ( !is_hardware_domain(d) )
+            break;
+
+        return host_system_suspend();
+#else
+        break;
+#endif
+    default:
+        break;
+    }
+
+    return 0;
 }
 
 void arch_domain_pause(struct domain *d)
