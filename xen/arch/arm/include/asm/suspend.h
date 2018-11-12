@@ -5,6 +5,7 @@
 
 #ifdef CONFIG_SYSTEM_SUSPEND
 
+void hyp_resume(void);
 int host_system_suspend(void);
 
 #endif /* CONFIG_SYSTEM_SUSPEND */
