@@ -197,6 +197,57 @@ static void do_psci_0_2_system_reset(void)
     domain_shutdown(d,SHUTDOWN_reboot);
 }
 
+static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
+{
+    struct vcpu *v;
+    struct domain *d = current->domain;
+
+    /* Drop this check once SYSTEM_SUSPEND is supported in hardware domain */
+    if ( is_hardware_domain(d) )
+        return PSCI_NOT_SUPPORTED;
+
+    /* Ensure that all CPUs other than the calling one are offline */
+    for_each_vcpu ( d, v )
+    {
+        if ( v != current && is_vcpu_online(v) )
+            return PSCI_DENIED;
+    }
+
+    /*
+     * System suspend requests are treated as performing standby
+     * as this simplifies Xen implementation.
+     *
+     * Arm Power State Coordination Interface (DEN0022F.b)
+     *
+     * 5.20.2 Caller responsibilities
+     * The call is equivalent to using the CPU_SUSPEND call for the deepest
+     * possible platform powerdown state. Consequently, the caller must observe
+     * all the rules described for CPU_SUSPEND. See section 5.4.
+     *
+     * 5.4.5 Caller responsibilities
+     * The caller must not assume that a powerdown request will return using
+     * the specified entry point address. The powerdown request might not
+     * complete due, for example, to pending interrupts. It is also possible
+     * that, because of coordination with other cores, the actual state entered
+     * is shallower than the one requested. Because of this it is possible for
+     * an implementation to downgrade the powerdown state request to a standby
+     * state. In the case of a downgrade to standby, the implementation returns
+     * at the instruction following the PSCI call, at the Exception level of
+     * the caller, instead of returning by the specified entry point address.
+     * The return code in this case is SUCCESS. In the case of an early return
+     * due to a pending wakeup event, the implementation can return at the next
+     * instruction, with a return code of SUCCESS, or resume at the specified
+     * entry point address.
+     *
+     * 5.4.9 Implementation responsibilities: State on return
+     * When returning from a standby state, the caller must observe no change in
+     * core state, other than any timer changes expected because of the time
+     * spent in the state, and changes in the CPU interface because of the
+     * wakeup reason.
+     */
+    return domain_shutdown(d, SHUTDOWN_suspend) ? PSCI_DENIED : PSCI_SUCCESS;
+}
+
 static int32_t do_psci_1_0_features(uint32_t psci_func_id)
 {
     /* /!\ Ordered by function ID and not name */
@@ -214,6 +265,8 @@ static int32_t do_psci_1_0_features(uint32_t psci_func_id)
     case PSCI_0_2_FN32_SYSTEM_OFF:
     case PSCI_0_2_FN32_SYSTEM_RESET:
     case PSCI_1_0_FN32_PSCI_FEATURES:
+    case PSCI_1_0_FN32_SYSTEM_SUSPEND:
+    case PSCI_1_0_FN64_SYSTEM_SUSPEND:
     case ARM_SMCCC_VERSION_FID:
         return 0;
     default:
@@ -341,6 +394,17 @@ bool do_vpsci_0_2_call(struct cpu_user_regs *regs, uint32_t fid)
 
         perfc_incr(vpsci_features);
         PSCI_SET_RESULT(regs, do_psci_1_0_features(psci_func_id));
+        return true;
+    }
+
+    case PSCI_1_0_FN32_SYSTEM_SUSPEND:
+    case PSCI_1_0_FN64_SYSTEM_SUSPEND:
+    {
+        register_t epoint = PSCI_ARG(regs,1);
+        register_t cid = PSCI_ARG(regs,2);
+
+        perfc_incr(vpsci_system_suspend);
+        PSCI_SET_RESULT(regs, do_psci_1_0_system_suspend(epoint, cid));
         return true;
     }
 
