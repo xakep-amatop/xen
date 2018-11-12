@@ -108,6 +108,9 @@ void preinit_xen_time(void);
 
 void force_update_vcpu_system_time(struct vcpu *v);
 
+void time_suspend(void);
+void time_resume(void);
+
 #endif /* __ARM_TIME_H__ */
 /*
  * Local variables:
