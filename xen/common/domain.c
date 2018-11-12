@@ -26,6 +26,7 @@
 #include <xen/hypercall.h>
 #include <xen/delay.h>
 #include <xen/shutdown.h>
+#include <xen/suspend.h>
 #include <xen/percpu.h>
 #include <xen/multicall.h>
 #include <xen/rcupdate.h>
@@ -1433,6 +1434,8 @@ void domain_resume(struct domain *d)
     domain_pause(d);
 
     spin_lock(&d->shutdown_lock);
+
+    arch_domain_resume(d);
 
     d->is_shutting_down = d->is_shut_down = 0;
     d->shutdown_code = SHUTDOWN_CODE_INVALID;
