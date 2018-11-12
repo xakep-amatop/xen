@@ -3,6 +3,9 @@
 #include <asm/cpufeature.h>
 #include <asm/event.h>
 #include <asm/psci.h>
+#include <asm/suspend.h>
+
+struct cpu_context cpu_context;
 
 /* Reset values of VCPU architecture specific registers */
 static void vcpu_arch_reset(struct vcpu *v)
@@ -130,6 +133,11 @@ static void xen_pt_enforce_wnx(void)
     flush_xen_tlb_local();
 }
 
+#ifndef CONFIG_ARM_64
+/* not supported on ARM_32 */
+int32_t hyp_suspend(struct cpu_context *ptr) { return 1; }
+#endif
+
 /* Xen suspend. Note: data is not used (suspend is the suspend to RAM) */
 static long system_suspend(void *data)
 {
@@ -158,9 +166,23 @@ static long system_suspend(void *data)
         goto resume_irqs;
     }
 
-    status = call_psci_system_suspend();
-    if ( status )
-        dprintk(XENLOG_ERR, "PSCI system suspend failed, err=%d\n", status);
+    if ( hyp_suspend(&cpu_context) )
+    {
+        status = call_psci_system_suspend();
+        /*
+         * If suspend is finalized properly by above system suspend PSCI call,
+         * the code below in this 'if' branch will never execute. Execution
+         * will continue from hyp_resume which is the hypervisor's resume point.
+         * In hyp_resume CPU context will be restored and since link-register is
+         * restored as well, it will appear to return from hyp_suspend. The
+         * difference in returning from hyp_suspend on system suspend versus
+         * resume is in function's return value: on suspend, the return value is
+         * a non-zero value, on resume it is zero. That is why the control flow
+         * will not re-enter this 'if' branch on resume.
+         */
+        if ( status )
+            dprintk(XENLOG_ERR, "PSCI system suspend failed, err=%d\n", status);
+    }
 
     system_state = SYS_STATE_resume;
 
