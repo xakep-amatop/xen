@@ -5,6 +5,7 @@
 
 #include <asm/current.h>
 #include <asm/domain.h>
+#include <asm/suspend.h>
 #include <asm/vgic.h>
 #include <asm/vpsci.h>
 #include <asm/event.h>
@@ -232,8 +233,7 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
     if ( is_64bit_domain(d) && is_thumb )
         return PSCI_INVALID_ADDRESS;
 
-    /* SYSTEM_SUSPEND is not supported for the hardware domain yet */
-    if ( is_hardware_domain(d) )
+    if ( !IS_ENABLED(CONFIG_SYSTEM_SUSPEND) && is_hardware_domain(d) )
         return PSCI_NOT_SUPPORTED;
 
     /* Ensure that all CPUs other than the calling one are offline */
@@ -266,6 +266,9 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
             "SYSTEM_SUSPEND requested, epoint=%#"PRIregister", cid=%#"PRIregister"\n",
             epoint, cid);
 
+    if ( is_control_domain(d) )
+        host_system_suspend(d);
+
     return rc;
 }
 
@@ -290,7 +293,10 @@ static int32_t do_psci_1_0_features(uint32_t psci_func_id)
         return 0;
     case PSCI_1_0_FN32_SYSTEM_SUSPEND:
     case PSCI_1_0_FN64_SYSTEM_SUSPEND:
-        return is_hardware_domain(current->domain) ? PSCI_NOT_SUPPORTED : 0;
+        if ( IS_ENABLED(CONFIG_SYSTEM_SUSPEND) ||
+             !is_hardware_domain(current->domain) )
+            return 0;
+        fallthrough;
     default:
         return PSCI_NOT_SUPPORTED;
     }
