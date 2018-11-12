@@ -1276,6 +1276,7 @@ void __domain_crash(struct domain *d)
 int domain_shutdown(struct domain *d, u8 reason)
 {
     struct vcpu *v;
+    int ret;
 
 #ifdef CONFIG_X86
     if ( pv_shim )
@@ -1288,7 +1289,11 @@ int domain_shutdown(struct domain *d, u8 reason)
         d->shutdown_code = reason;
     reason = d->shutdown_code;
 
+#if defined(CONFIG_SYSTEM_SUSPEND) && defined(CONFIG_ARM)
+    if ( reason != SHUTDOWN_suspend && is_hardware_domain(d) )
+#else
     if ( is_hardware_domain(d) )
+#endif
         hwdom_shutdown(reason);
 
     if ( d->is_shutting_down )
@@ -1311,13 +1316,13 @@ int domain_shutdown(struct domain *d, u8 reason)
         v->paused_for_shutdown = 1;
     }
 
-    arch_domain_shutdown(d);
+    ret = arch_domain_shutdown(d);
 
     __domain_finalise_shutdown(d);
 
     spin_unlock(&d->shutdown_lock);
 
-    return 0;
+    return ret;
 }
 
 void domain_resume(struct domain *d)

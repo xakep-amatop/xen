@@ -101,7 +101,7 @@ int arch_domain_create(struct domain *d,
 int arch_domain_teardown(struct domain *d);
 void arch_domain_destroy(struct domain *d);
 
-void arch_domain_shutdown(struct domain *d);
+int arch_domain_shutdown(struct domain *d);
 void arch_domain_pause(struct domain *d);
 void arch_domain_unpause(struct domain *d);
 
