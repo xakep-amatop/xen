@@ -561,6 +561,9 @@ END(efi_xen_start)
 
 #endif /* CONFIG_ARM_EFI */
 
+ENTRY(hyp_resume)
+        b .
+
 /*
  * Local variables:
  * mode: ASM
