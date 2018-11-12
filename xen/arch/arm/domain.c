@@ -857,8 +857,26 @@ void arch_domain_destroy(struct domain *d)
     domain_io_free(d);
 }
 
-void arch_domain_shutdown(struct domain *d)
+int arch_domain_shutdown(struct domain *d)
 {
+    struct vcpu *v;
+
+    switch (d->shutdown_code)
+    {
+    case SHUTDOWN_suspend:
+        /* Ensure that all CPUs other than the calling one are offline */
+        for_each_vcpu ( d, v )
+        {
+            if ( v != current && is_vcpu_online(v) )
+                return -EPERM;
+        }
+        break;
+    default:
+        break;
+    }
+
+
+    return 0;
 }
 
 void arch_domain_pause(struct domain *d)
