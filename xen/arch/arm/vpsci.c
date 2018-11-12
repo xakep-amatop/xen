@@ -202,10 +202,6 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
     struct vcpu *v;
     struct domain *d = current->domain;
 
-    /* Drop this check once SYSTEM_SUSPEND is supported in hardware domain */
-    if ( is_hardware_domain(d) )
-        return PSCI_NOT_SUPPORTED;
-
     /* Ensure that all CPUs other than the calling one are offline */
     for_each_vcpu ( d, v )
     {
