@@ -170,6 +170,10 @@ static long system_suspend(void *data)
      */
     update_boot_mapping(true);
 
+    status = call_psci_system_suspend();
+    if ( status )
+        dprintk(XENLOG_ERR, "PSCI system suspend failed, err=%d\n", status);
+
     system_state = SYS_STATE_resume;
     update_boot_mapping(false);
 
