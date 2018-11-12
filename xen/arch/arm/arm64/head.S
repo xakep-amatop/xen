@@ -313,7 +313,7 @@ END(init_secondary)
  *
  * Clobbers x0 - x5
  */
-FUNC_LOCAL(check_cpu_mode)
+FUNC(check_cpu_mode)
         PRINT_ID("- Current EL ")
         mrs   x5, CurrentEL
         print_reg x5
@@ -362,7 +362,7 @@ END(zero_bss)
  *
  * Clobbers x0 - x3
  */
-FUNC_LOCAL(cpu_init)
+FUNC(cpu_init)
         PRINT_ID("- Initialize CPU -\r\n")
 
         /* Set up memory attribute type tables */
