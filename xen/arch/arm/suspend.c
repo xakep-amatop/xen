@@ -65,6 +65,8 @@ static long system_suspend(void *data)
         goto resume_console;
     }
 
+    set_init_ttbr(xen_pgtable);
+
     /*
      * Enable identity mapping before entering suspend to simplify
      * the resume path
