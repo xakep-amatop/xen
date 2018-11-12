@@ -1303,6 +1303,13 @@ void __domain_crash(struct domain *d)
     domain_shutdown(d, SHUTDOWN_crash);
 }
 
+static inline bool need_hwdom_shutdown(const struct domain *d, u8 reason)
+{
+    if ( IS_ENABLED(CONFIG_SYSTEM_SUSPEND) && IS_ENABLED(CONFIG_ARM) )
+        return is_hardware_domain(d) && reason != SHUTDOWN_suspend;
+
+    return is_hardware_domain(d);
+}
 
 int domain_shutdown(struct domain *d, u8 reason)
 {
@@ -1319,7 +1326,7 @@ int domain_shutdown(struct domain *d, u8 reason)
         d->shutdown_code = reason;
     reason = d->shutdown_code;
 
-    if ( is_hardware_domain(d) )
+    if ( need_hwdom_shutdown(d, reason) )
         hwdom_shutdown(reason);
 
     if ( d->is_shutting_down )
