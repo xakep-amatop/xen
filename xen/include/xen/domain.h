@@ -8,6 +8,10 @@
 
 #include <public/xen.h>
 
+#if __has_include(<asm/suspend.h>)
+#include <asm/suspend.h>
+#endif
+
 struct guest_area {
     struct page_info *pg;
     void *map;
@@ -108,6 +112,13 @@ void arch_domain_unpause(struct domain *d);
 int arch_domain_soft_reset(struct domain *d);
 
 void arch_domain_creation_finished(struct domain *d);
+
+#if !__has_include(<asm/suspend.h>)
+static inline int arch_domain_resume(struct domain *d)
+{
+    return 0;
+}
+#endif /* !__has_include(<asm/suspend.h>) */
 
 void arch_p2m_set_access_required(struct domain *d, bool access_required);
 
