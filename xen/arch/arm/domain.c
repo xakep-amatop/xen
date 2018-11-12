@@ -29,6 +29,8 @@
 #include <asm/vgic.h>
 #include <asm/vtimer.h>
 
+#include <public/sched.h>
+
 #include "vpci.h"
 #include "vuart.h"
 
@@ -859,6 +861,14 @@ void arch_domain_destroy(struct domain *d)
 
 void arch_domain_shutdown(struct domain *d)
 {
+    switch ( d->shutdown_code )
+    {
+    case SHUTDOWN_suspend:
+        vcpu_block_unless_event_pending(current);
+        break;
+    default:
+        break;
+    }
 }
 
 void arch_domain_pause(struct domain *d)
