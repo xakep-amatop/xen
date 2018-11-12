@@ -24,6 +24,7 @@
 #include <asm/current.h>
 #include <xen/vpci.h>
 #include <xen/wait.h>
+#include <xen/watchdog.h>
 #include <public/xen.h>
 #include <public/domctl.h>
 #include <public/sysctl.h>
@@ -566,7 +567,7 @@ struct domain
 #define NR_DOMAIN_WATCHDOG_TIMERS 2
     spinlock_t watchdog_lock;
     uint32_t watchdog_inuse_map;
-    struct timer watchdog_timer[NR_DOMAIN_WATCHDOG_TIMERS];
+    struct watchdog_timer watchdog_timer[NR_DOMAIN_WATCHDOG_TIMERS];
 
     struct rcu_head rcu;
 
