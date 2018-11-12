@@ -110,7 +110,24 @@ static void vcpu_suspend(register_t epoint, register_t cid)
     vcpu_arch_reset(v);
 
     /* Initialize VCPU registers */
-    _arch_set_info_guest(v, &ctxt);
+    arch_set_info_guest(v, &ctxt);
+}
+
+/*
+ * After boot, Xen page-tables should not contain mapping that are both
+ * Writable and eXecutables.
+ *
+ * This should be called on each CPU to enforce the policy.
+ */
+static void xen_pt_enforce_wnx(void)
+{
+    WRITE_SYSREG(READ_SYSREG(SCTLR_EL2) | SCTLR_Axx_ELx_WXN, SCTLR_EL2);
+    /*
+     * The TLBs may cache SCTLR_EL2.WXN. So ensure it is synchronized
+     * before flushing the TLBs.
+     */
+    isb();
+    flush_xen_tlb_local();
 }
 
 /* Xen suspend. Note: data is not used (suspend is the suspend to RAM) */
@@ -146,6 +163,12 @@ static long system_suspend(void *data)
         dprintk(XENLOG_ERR, "PSCI system suspend failed, err=%d\n", status);
 
     system_state = SYS_STATE_resume;
+
+    /*
+     * SCTLR_WXN needs to be set to configure that a mapping cannot be both
+     * writable and executable.
+     */
+    xen_pt_enforce_wnx();
 
     gic_resume();
 

@@ -1,4 +1,6 @@
 #include <asm/current.h>
+#include <asm/macros.h>
+#include <asm/page.h>
 #include <asm/regs.h>
 #include <asm/alternative.h>
 #include <asm/smccc.h>
