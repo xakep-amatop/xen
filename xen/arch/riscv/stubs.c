@@ -193,7 +193,7 @@ void arch_domain_destroy(struct domain *d)
     BUG_ON("unimplemented");
 }
 
-void arch_domain_shutdown(struct domain *d)
+int arch_domain_shutdown(struct domain *d)
 {
     BUG_ON("unimplemented");
 }
