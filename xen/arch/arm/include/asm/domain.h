@@ -5,6 +5,7 @@
 #include <xen/timer.h>
 #include <asm/page.h>
 #include <asm/p2m.h>
+#include <asm/suspend.h>
 #include <asm/vfp.h>
 #include <asm/mmio.h>
 #include <asm/gic.h>
@@ -126,6 +127,7 @@ struct arch_domain
     void *sci_data;
 #endif
 
+    struct resume_info resume_ctx;
 }  __cacheline_aligned;
 
 struct arch_vcpu
