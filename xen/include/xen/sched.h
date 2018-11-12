@@ -1052,6 +1052,9 @@ static inline struct vcpu *domain_vcpu(const struct domain *d,
     return vcpu_id >= d->max_vcpus ? NULL : d->vcpu[idx];
 }
 
+void freeze_domains(void);
+void thaw_domains(void);
+
 void cpu_init(void);
 
 /*
