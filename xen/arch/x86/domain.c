@@ -983,10 +983,12 @@ void arch_domain_destroy(struct domain *d)
     psr_domain_free(d);
 }
 
-void arch_domain_shutdown(struct domain *d)
+int arch_domain_shutdown(struct domain *d)
 {
     if ( is_viridian_domain(d) )
         viridian_time_domain_freeze(d);
+
+    return 0;
 }
 
 void arch_domain_pause(struct domain *d)
