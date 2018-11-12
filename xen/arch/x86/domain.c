@@ -1138,6 +1138,11 @@ void arch_domain_creation_finished(struct domain *d)
         hvm_domain_creation_finished(d);
 }
 
+int arch_domain_resume(struct domain *d)
+{
+    return 0;
+}
+
 #ifdef CONFIG_COMPAT
 #define xen_vcpu_guest_context vcpu_guest_context
 #define fpu_ctxt fpu_ctxt.x

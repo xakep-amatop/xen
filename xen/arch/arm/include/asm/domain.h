@@ -126,6 +126,12 @@ struct arch_domain
     void *sci_data;
 #endif
 
+    struct resume_info {
+        register_t ep;
+        register_t cid;
+        struct vcpu *wake_cpu;
+    } resume_ctx;
+
 }  __cacheline_aligned;
 
 struct arch_vcpu

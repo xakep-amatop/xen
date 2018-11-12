@@ -198,6 +198,11 @@ void arch_domain_creation_finished(struct domain *d)
     BUG_ON("unimplemented");
 }
 
+int arch_domain_resume(struct domain *d)
+{
+    return 0;
+}
+
 int arch_set_info_guest(struct vcpu *v, vcpu_guest_context_u c)
 {
     BUG_ON("unimplemented");
