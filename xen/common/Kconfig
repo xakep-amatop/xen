@@ -137,6 +137,11 @@ config HAS_EX_TABLE
 config HAS_FAST_MULTIPLY
 	bool
 
+config HAS_HWDOM_SHUTDOWN_ON_SUSPEND
+	bool
+	default y
+	depends on !ARM_64 || !SYSTEM_SUSPEND
+
 config HAS_IOPORTS
 	bool
 
