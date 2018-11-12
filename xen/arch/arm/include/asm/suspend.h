@@ -7,6 +7,8 @@
 
 int host_system_suspend(void);
 
+void hyp_resume(void);
+
 #endif /* CONFIG_SYSTEM_SUSPEND */
 
 #endif /* __ASM_ARM_SUSPEND_H__ */
