@@ -1352,12 +1352,21 @@ int domain_shutdown(struct domain *d, u8 reason)
 void domain_resume(struct domain *d)
 {
     struct vcpu *v;
+    int rc;
 
     /*
      * Some code paths assume that shutdown status does not get reset under
      * their feet (e.g., some assertions make this assumption).
      */
     domain_pause(d);
+
+    rc = arch_domain_resume(d);
+    if ( rc )
+    {
+        domain_unpause(d);
+        printk("%pd: Failed to resume domain (ret %d)\n", d, rc);
+        return;
+    }
 
     spin_lock(&d->shutdown_lock);
 

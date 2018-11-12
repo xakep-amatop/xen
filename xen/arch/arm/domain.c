@@ -12,6 +12,8 @@
 #include <xen/softirq.h>
 #include <xen/wait.h>
 
+#include <public/sched.h>
+
 #include <asm/arm64/sve.h>
 #include <asm/cpuerrata.h>
 #include <asm/cpufeature.h>
@@ -27,6 +29,7 @@
 #include <asm/tee/tee.h>
 #include <asm/vfp.h>
 #include <asm/vgic.h>
+#include <asm/vpsci.h>
 #include <asm/vtimer.h>
 
 #include "vpci.h"
@@ -878,6 +881,25 @@ int arch_domain_soft_reset(struct domain *d)
 void arch_domain_creation_finished(struct domain *d)
 {
     p2m_domain_creation_finished(d);
+}
+
+int arch_domain_resume(struct domain *d)
+{
+    int rc;
+    typeof(d->arch.resume_ctx) *ctx = &d->arch.resume_ctx;
+
+    if ( !d->is_shutting_down || d->shutdown_code != SHUTDOWN_suspend )
+    {
+        dprintk(XENLOG_WARNING,
+                "%pd: Invalid domain state for resume: is_shutting_down=%d, shutdown_code=%d\n",
+                d, d->is_shutting_down, d->shutdown_code);
+        return -EINVAL;
+    }
+
+    rc = vpsci_vcpu_up_prepare(ctx->wake_cpu , ctx->ep, ctx->cid);
+    memset(ctx, 0, sizeof(*ctx));
+
+    return rc;
 }
 
 static int is_guest_pv32_psr(uint32_t psr)
