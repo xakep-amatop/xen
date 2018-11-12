@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 
+#include <asm/psci.h>
 #include <xen/console.h>
 #include <xen/cpu.h>
 #include <xen/sched.h>
@@ -69,6 +70,10 @@ static long system_suspend(void *data)
      * the resume path
      */
     update_boot_mapping(true);
+
+    status = call_psci_system_suspend();
+    if ( status )
+        dprintk(XENLOG_WARNING, "PSCI system suspend failed, err=%d\n", status);
 
     system_state = SYS_STATE_resume;
     update_boot_mapping(false);
