@@ -37,7 +37,14 @@ extern struct cpu_context cpu_context;
 void hyp_resume(void);
 int prepare_resume_ctx(struct cpu_context *ptr);
 
-#endif /* CONFIG_SYSTEM_SUSPEND */
+void host_system_suspend(void);
+
+#else /* !CONFIG_SYSTEM_SUSPEND */
+
+static inline void host_system_suspend(void)
+{}
+
+#endif
 
 #endif /* __ARM_SUSPEND_H__ */
 
