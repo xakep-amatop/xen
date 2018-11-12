@@ -313,7 +313,7 @@ END(init_secondary)
  *
  * Clobbers x0 - x5
  */
-FUNC_LOCAL(check_cpu_mode)
+FUNC(check_cpu_mode)
         PRINT_ID("- Current EL ")
         mrs   x5, CurrentEL
         print_reg x5
@@ -362,7 +362,7 @@ END(zero_bss)
  *
  * Clobbers x0 - x3
  */
-FUNC_LOCAL(cpu_init)
+FUNC(cpu_init)
         PRINT_ID("- Initialize CPU -\r\n")
 
         /* Set up memory attribute type tables */
@@ -560,6 +560,76 @@ FUNC(efi_xen_start)
 END(efi_xen_start)
 
 #endif /* CONFIG_ARM_EFI */
+
+#ifdef CONFIG_SYSTEM_SUSPEND
+
+ENTRY(hyp_resume)
+        msr   DAIFSet, 0xf           /* Disable all interrupts */
+
+        tlbi  alle2
+        dsb   sy                     /* Ensure completion of TLB flush */
+        isb
+
+        ldr   x0, =start
+        adr   x19, start             /* x19 := paddr (start) */
+        sub   x20, x19, x0           /* x20 := phys-offset */
+
+        /* Initialize the UART if earlyprintk has been enabled. */
+#ifdef CONFIG_EARLY_PRINTK
+        bl    init_uart
+#endif
+        PRINT_ID("- Xen resuming -\r\n")
+
+        bl    check_cpu_mode
+        bl    cpu_init
+
+        ldr   lr, =mmu_resumed
+        b     enable_secondary_cpu_mm
+
+mmu_resumed:
+        /* Now we can access the cpu_context, so restore the context here */
+        ldr     x0, =cpu_context
+
+        /* Restore callee-saved registers */
+        ldp     x19, x20, [x0], #16
+        ldp     x21, x22, [x0], #16
+        ldp     x23, x24, [x0], #16
+        ldp     x25, x26, [x0], #16
+        ldp     x27, x28, [x0], #16
+        ldp     x29, lr, [x0], #16
+
+        /* Restore stack pointer */
+        ldr     x2, [x0], #8
+        mov     sp, x2
+
+        /* Restore system control registers */
+        ldr     x2, [x0], #8
+        msr     VBAR_EL2, x2
+        ldr     x2, [x0], #8
+        msr     VTCR_EL2, x2
+        ldr     x2, [x0], #8
+        msr     VTTBR_EL2, x2
+        ldr     x2, [x0], #8
+        msr     TPIDR_EL2, x2
+        ldr     x2, [x0], #8
+        msr     MDCR_EL2, x2
+        ldr     x2, [x0], #8
+        msr     HSTR_EL2, x2
+        ldr     x2, [x0], #8
+        msr     CPTR_EL2, x2
+        ldr     x2, [x0], #8
+        msr     HCR_EL2, x2
+        isb
+
+        /* Since context is restored return from this function will appear as
+         * return from hyp_suspend. To distinguish a return from hyp_suspend
+         * which is called upon finalizing the suspend, as opposed to return
+         * from this function which executes on resume, we need to return zero
+         * value here. */
+        mov x0, #0
+        ret
+
+#endif /* CONFIG_SYSTEM_SUSPEND */
 
 /*
  * Local variables:
