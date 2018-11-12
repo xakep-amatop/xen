@@ -233,6 +233,9 @@ struct arch_vcpu
     struct vtimer virt_timer;
     bool   vtimer_initialized;
 
+    register_t suspend_ep;
+    register_t suspend_cid;
+
     /*
      * The full P2M may require some cleaning (e.g when emulation
      * set/way). As the action can take a long time, it requires
