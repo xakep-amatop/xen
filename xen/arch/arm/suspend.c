@@ -194,20 +194,23 @@ static long system_suspend(void *data)
      */
     update_boot_mapping(true);
 
-    status = call_psci_system_suspend();
-    /*
-     * If suspend is finalized properly by above system suspend PSCI call,
-     * the code below in this 'if' branch will never execute. Execution
-     * will continue from hyp_resume which is the hypervisor's resume point.
-     * In hyp_resume CPU context will be restored and since link-register is
-     * restored as well, it will appear to return from hyp_suspend. The
-     * difference in returning from hyp_suspend on system suspend versus
-     * resume is in function's return value: on suspend, the return value is
-     * a non-zero value, on resume it is zero. That is why the control flow
-     * will not re-enter this 'if' branch on resume.
-     */
-    if ( status )
-        dprintk(XENLOG_ERR, "PSCI system suspend failed, err=%d\n", status);
+    if ( hyp_suspend(&cpu_context) )
+    {
+        status = call_psci_system_suspend();
+        /*
+         * If suspend is finalized properly by above system suspend PSCI call,
+         * the code below in this 'if' branch will never execute. Execution
+         * will continue from hyp_resume which is the hypervisor's resume point.
+         * In hyp_resume CPU context will be restored and since link-register is
+         * restored as well, it will appear to return from hyp_suspend. The
+         * difference in returning from hyp_suspend on system suspend versus
+         * resume is in function's return value: on suspend, the return value is
+         * a non-zero value, on resume it is zero. That is why the control flow
+         * will not re-enter this 'if' branch on resume.
+         */
+        if ( status )
+            dprintk(XENLOG_ERR, "PSCI system suspend failed, err=%d\n", status);
+    }
 
     system_state = SYS_STATE_resume;
 
