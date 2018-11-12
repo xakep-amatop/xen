@@ -27,7 +27,10 @@
 #include <asm/tee/tee.h>
 #include <asm/vfp.h>
 #include <asm/vgic.h>
+#include <asm/vpsci.h>
 #include <asm/vtimer.h>
+
+#include <public/sched.h>
 
 #include "vpci.h"
 #include "vuart.h"
@@ -82,12 +85,29 @@ static void noreturn idle_loop(void)
     }
 }
 
+static bool vcpu_is_suspended(const struct vcpu *v)
+{
+    bool is_suspended;
+    struct domain *d = v->domain;
+
+    spin_lock(&d->shutdown_lock);
+    is_suspended = d->shutdown_code == SHUTDOWN_suspend &&
+                   v->paused_for_shutdown;
+    spin_unlock(&d->shutdown_lock);
+
+    return is_suspended;
+}
+
 static void ctxt_switch_from(struct vcpu *p)
 {
     /* When the idle VCPU is running, Xen will always stay in hypervisor
      * mode. Therefore we don't need to save the context of an idle VCPU.
      */
     if ( is_idle_vcpu(p) )
+        return;
+
+    /* VCPU's context should not be saved if its domain is suspended */
+    if ( vcpu_is_suspended(p) )
         return;
 
     p2m_save_state(p);
@@ -858,8 +878,23 @@ void arch_domain_destroy(struct domain *d)
     domain_io_free(d);
 }
 
-void arch_domain_shutdown(struct domain *d)
+int arch_domain_shutdown(struct domain *d)
 {
+    int ret = 0;
+
+    switch ( d->shutdown_code )
+    {
+    case SHUTDOWN_suspend:
+    {
+        ret = do_vpsci_guest_suspend(d);
+        break;
+    }
+
+    default:
+        break;
+    }
+
+    return ret;
 }
 
 void arch_domain_pause(struct domain *d)
