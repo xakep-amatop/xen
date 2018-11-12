@@ -186,6 +186,7 @@ static void ctxt_switch_to(struct vcpu *n)
     {
         n->domain->is_shut_down = 0;
         n->domain->shutdown_code = SHUTDOWN_CODE_INVALID;
+        watchdog_domain_resume(n->domain);
     }
 
     vpidr = READ_SYSREG(MIDR_EL1);
