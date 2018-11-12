@@ -91,6 +91,16 @@ static void ctxt_switch_from(struct vcpu *p)
     if ( is_idle_vcpu(p) )
         return;
 
+    /* Arch timer */
+    p->arch.cntkctl = READ_SYSREG(CNTKCTL_EL1);
+    virt_timer_save(p);
+
+    /* VGIC */
+    gic_save_state(p);
+
+    if ( test_bit(_VPF_suspended, &p->pause_flags) )
+        return;
+
     p2m_save_state(p);
 
     /* CP 15 */
@@ -106,10 +116,6 @@ static void ctxt_switch_from(struct vcpu *p)
     p->arch.tpidr_el0 = READ_SYSREG(TPIDR_EL0);
     p->arch.tpidrro_el0 = READ_SYSREG(TPIDRRO_EL0);
     p->arch.tpidr_el1 = READ_SYSREG(TPIDR_EL1);
-
-    /* Arch timer */
-    p->arch.cntkctl = READ_SYSREG(CNTKCTL_EL1);
-    virt_timer_save(p);
 
     if ( is_32bit_domain(p->domain) && cpu_has_thumbee )
     {
@@ -158,9 +164,6 @@ static void ctxt_switch_from(struct vcpu *p)
     p->arch.afsr1 = READ_SYSREG(AFSR1_EL1);
 
     /* XXX MPU */
-
-    /* VGIC */
-    gic_save_state(p);
 
     isb();
 }

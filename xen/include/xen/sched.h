@@ -778,6 +778,9 @@ void domain_destroy(struct domain *d);
 int domain_kill(struct domain *d);
 int domain_shutdown(struct domain *d, u8 reason);
 void domain_resume(struct domain *d);
+#ifdef CONFIG_ARM
+void domain_resume_nopause(struct domain *d);
+#endif
 
 int domain_soft_reset(struct domain *d, bool resuming);
 
@@ -969,6 +972,9 @@ static inline struct domain *next_domain_in_cpupool(
 /* VCPU is parked. */
 #define _VPF_parked          8
 #define VPF_parked           (1UL<<_VPF_parked)
+/* VCPU is suspended. */
+#define _VPF_suspended 9
+#define VPF_suspended (1UL<<_VPF_suspended)
 
 static inline bool vcpu_runnable(const struct vcpu *v)
 {

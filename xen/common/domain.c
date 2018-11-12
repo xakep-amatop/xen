@@ -1089,15 +1089,12 @@ int domain_shutdown(struct domain *d, u8 reason)
     return 0;
 }
 
-void domain_resume(struct domain *d)
+#ifndef CONFIG_ARM
+static
+#endif
+void domain_resume_nopause(struct domain *d)
 {
     struct vcpu *v;
-
-    /*
-     * Some code paths assume that shutdown status does not get reset under
-     * their feet (e.g., some assertions make this assumption).
-     */
-    domain_pause(d);
 
     spin_lock(&d->shutdown_lock);
 
@@ -1106,13 +1103,24 @@ void domain_resume(struct domain *d)
 
     for_each_vcpu ( d, v )
     {
+        clear_bit(_VPF_suspended, &v->pause_flags);
+
         if ( v->paused_for_shutdown )
             vcpu_unpause(v);
         v->paused_for_shutdown = 0;
     }
 
     spin_unlock(&d->shutdown_lock);
+}
 
+void domain_resume(struct domain *d)
+{
+    /*
+     * Some code paths assume that shutdown status does not get reset under
+     * their feet (e.g., some assertions make this assumption).
+     */
+    domain_pause(d);
+    domain_resume_nopause(d);
     domain_unpause(d);
 }
 
