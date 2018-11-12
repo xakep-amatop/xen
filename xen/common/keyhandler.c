@@ -300,7 +300,7 @@ static void cf_check dump_domains(unsigned char key)
         for ( i = 0 ; i < NR_DOMAIN_WATCHDOG_TIMERS; i++ )
             if ( test_bit(i, &d->watchdog_inuse_map) )
                 printk("    watchdog %d expires in %d seconds\n",
-                       i, (u32)((d->watchdog_timer[i].expires - NOW()) >> 30));
+                       i, (u32)((d->watchdog_timer[i].timer.expires - NOW()) >> 30));
 
         arch_dump_domain_info(d);
 
