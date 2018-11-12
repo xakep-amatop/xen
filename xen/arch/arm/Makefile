@@ -54,6 +54,7 @@ obj-y += smpboot.o
 obj-$(CONFIG_STATIC_EVTCHN) += static-evtchn.init.o
 obj-$(CONFIG_STATIC_MEMORY) += static-memory.init.o
 obj-$(CONFIG_STATIC_SHM) += static-shmem.init.o
+obj-$(CONFIG_SYSTEM_SUSPEND) += suspend.o
 obj-y += sysctl.o
 obj-y += time.o
 obj-y += traps.o

@@ -4,6 +4,7 @@
 #include <xen/types.h>
 
 #include <asm/current.h>
+#include <asm/suspend.h>
 #include <asm/vgic.h>
 #include <asm/vpsci.h>
 #include <asm/event.h>
@@ -214,9 +215,10 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
     struct vcpu *v;
     struct domain *d = current->domain;
 
-    /* SYSTEM_SUSPEND is not supported for the hardware domain yet */
+#ifndef CONFIG_SYSTEM_SUSPEND
     if ( is_hardware_domain(d) )
         return PSCI_NOT_SUPPORTED;
+#endif
 
     /* Ensure that all CPUs other than the calling one are offline */
     domain_lock(d);
@@ -233,6 +235,14 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
     rc = domain_shutdown(d, SHUTDOWN_suspend);
     if ( rc )
         return PSCI_DENIED;
+
+#ifdef CONFIG_SYSTEM_SUSPEND
+    if ( is_hardware_domain(d) && host_system_suspend() )
+    {
+        domain_resume_nopause(d);
+        return PSCI_DENIED;
+    }
+#endif
 
     rc = do_setup_vcpu_ctx(current, epoint, cid);
     if ( rc != PSCI_SUCCESS )

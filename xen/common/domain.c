@@ -1057,7 +1057,11 @@ int domain_shutdown(struct domain *d, u8 reason)
         d->shutdown_code = reason;
     reason = d->shutdown_code;
 
+#if defined(CONFIG_SYSTEM_SUSPEND) && defined(CONFIG_ARM)
+    if ( reason != SHUTDOWN_suspend && is_hardware_domain(d) )
+#else
     if ( is_hardware_domain(d) )
+#endif
         hwdom_shutdown(reason);
 
     if ( d->is_shutting_down )
