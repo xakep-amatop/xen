@@ -11,6 +11,8 @@
 #include <asm/platform.h>
 #include <public/sched.h>
 
+struct cpu_context cpu_context;
+
 /* Reset values of VCPU architecture specific registers */
 static void vcpu_arch_reset(struct vcpu *v)
 {
