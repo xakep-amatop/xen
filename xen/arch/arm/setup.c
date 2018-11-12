@@ -508,6 +508,14 @@ void asmlinkage __init start_xen(unsigned long fdt_paddr)
     for_each_domain( d )
         domain_unpause_by_systemcontroller(d);
 
+#ifdef CONFIG_SYSTEM_SUSPEND
+    /*
+     * It is called to initialize init_ttbr.
+     * Without this call, Xen gets stuck after resuming.
+     */
+    prepare_secondary_mm(0);
+#endif
+
     /* Switch on to the dynamically allocated stack for the idle vcpu
      * since the static one we're running on is about to be freed. */
     memcpy(idle_vcpu[0]->arch.cpu_info, get_cpu_info(),
