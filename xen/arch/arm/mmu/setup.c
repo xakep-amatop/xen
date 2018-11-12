@@ -298,6 +298,8 @@ void __init setup_pagetables(void)
 #ifdef CONFIG_ARM_32
     per_cpu(xen_pgtable, 0) = cpu0_pgtable;
 #endif
+
+    prepare_secondary_mm(0);
 }
 
 void *__init arch_vmap_virt_end(void)
