@@ -4,6 +4,7 @@
 #define __ASM_ARM_SUSPEND_H__
 
 int32_t domain_suspend(register_t epoint, register_t cid);
+void hyp_resume(void);
 
 #endif
 
