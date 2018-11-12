@@ -306,6 +306,13 @@ FUNC_LOCAL(enable_mmu)
         ret
 END(enable_mmu)
 
+#ifdef CONFIG_SYSTEM_SUSPEND
+
+ENTRY(hyp_resume)
+        b .
+
+#endif /* CONFIG_SYSTEM_SUSPEND */
+
 /*
  * Enable mm (turn on the data cache and the MMU) for secondary CPUs.
  * The function will return to the virtual address provided in LR (e.g. the
