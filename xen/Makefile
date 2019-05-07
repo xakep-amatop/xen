@@ -206,6 +206,9 @@ filechk_kconfig_allconfig = \
 config: FORCE
 	$(MAKE) $(kconfig) $@
 
+%_defconfig: FORCE
+	$(MAKE) $(kconfig) $@
+
 # Config.mk tries to include .config file, don't try to remake it
 %/.config: ;
 
