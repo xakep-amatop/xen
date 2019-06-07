@@ -15,6 +15,7 @@
 #include <xen/types.h>
 #include <xsm/xsm.h>
 #include <public/domctl.h>
+#include <asm/vscmi.h>
 
 void arch_get_domain_info(const struct domain *d,
                           struct xen_domctl_getdomaininfo *info)
@@ -176,6 +177,10 @@ long arch_do_domctl(struct xen_domctl *domctl, struct domain *d,
 
         return rc;
     }
+
+    case XEN_DOMCTL_vscmi_init:
+        return domain_vscmi_init(d, domctl->u.vscmi_init.gfn);
+
     default:
     {
         int rc;

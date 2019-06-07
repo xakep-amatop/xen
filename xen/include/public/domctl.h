@@ -1195,6 +1195,13 @@ struct xen_domctl_platform {
     } u;
 };
 
+/* XEN_DOMCTL_vscmi_init */
+struct xen_domctl_vscmi_init {
+        uint64_aligned_t  gfn;  /* IN - guest gfn to be used as a
+                                 *      shared page for SCMI comms.
+                                 */
+};
+
 struct xen_domctl {
     uint32_t cmd;
 #define XEN_DOMCTL_createdomain                   1
@@ -1281,6 +1288,7 @@ struct xen_domctl {
 #define XEN_DOMCTL_set_cpu_policy                83
 #define XEN_DOMCTL_vmtrace_op                    84
 #define XEN_DOMCTL_platform                      85
+#define XEN_DOMCTL_vscmi_init                   300
 #define XEN_DOMCTL_gdbsx_guestmemio            1000
 #define XEN_DOMCTL_gdbsx_pausevcpu             1001
 #define XEN_DOMCTL_gdbsx_unpausevcpu           1002
@@ -1343,6 +1351,7 @@ struct xen_domctl {
         struct xen_domctl_vuart_op          vuart_op;
         struct xen_domctl_vmtrace_op        vmtrace_op;
         struct xen_domctl_platform          domctl_platform;
+        struct xen_domctl_vscmi_init        vscmi_init;
         uint8_t                             pad[128];
     } u;
 };
