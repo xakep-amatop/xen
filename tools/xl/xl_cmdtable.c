@@ -630,6 +630,24 @@ const struct cmd_spec cmd_table[] = {
       "Issue a qemu monitor command to the device model of a domain",
       "<Domain> <Command>",
     },
+    {
+        "guest-pm-show",
+        &main_guest_pm_show,
+        0, 1,
+        "Show guest power management policies",
+        "<Domain>",
+    },
+    {
+        "guest-pm-set",
+        &main_guest_pm_set,
+        0, 1,
+        "Configure guest power management policies",
+        "-d|-e <Domain> [<MinOPP> <MaxOPP>]",
+        "-e             Allow guest to issue PM requests\n"
+        "-d             Disallow guest to issue PM requests\n"
+        "<MinOPP>       <0-15> Minimal allowed performance level (only for -e)\n"
+        "<MaxOPP>       <0-15> Maximal allowed performance level (only for -e)\n"
+    }
 };
 
 const int cmdtable_len = ARRAY_SIZE(cmd_table);
