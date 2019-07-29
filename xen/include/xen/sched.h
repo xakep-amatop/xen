@@ -9,6 +9,7 @@
 #include <xen/timer.h>
 #include <xen/rangeset.h>
 #include <xen/domain.h>
+#include <xen/guest_pm.h>
 #include <xen/iommu.h>
 #include <xen/rcupdate.h>
 #include <xen/cpumask.h>
@@ -582,6 +583,9 @@ struct domain
         spinlock_t              lock;
         struct ioreq_server     *server[MAX_NR_IOREQ_SERVERS];
     } ioreq_server;
+#endif
+#ifdef CONFIG_HAS_PM
+    struct guest_pm pm;
 #endif
 };
 
