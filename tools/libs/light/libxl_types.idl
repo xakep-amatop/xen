@@ -274,6 +274,12 @@ libxl_passthrough = Enumeration("passthrough", [
     (4, "share_pt"),
     ])
 
+libxl_guest_pm_state = Enumeration("guest_pm_state", [
+   (-1, "NOT_SET"),
+   (0, "OFF"),
+   (1, "ON")
+   ])
+
 #
 # Complex libxl types
 #
@@ -290,6 +296,7 @@ libxl_iomem_range = Struct("iomem_range", [
     ("number", uint64),
     # guest frame number used as a start for the mapping
     ("gfn", uint64, {'init_val': "LIBXL_INVALID_GFN"}),
+
     ])
 
 libxl_vga_interface_info = Struct("vga_interface_info", [
@@ -493,6 +500,12 @@ libxl_altp2m_mode = Enumeration("altp2m_mode", [
     (3, "limited"),
     ], init_val = "LIBXL_ALTP2M_MODE_DISABLED")
 
+libxl_guest_pm_info = Struct("guest_pm", [
+    ("state", libxl_guest_pm_state),
+    ("opp_min", uint8),
+    ("opp_max", uint8)
+    ])
+
 libxl_domain_build_info = Struct("domain_build_info",[
     ("max_vcpus",       integer),
     ("avail_vcpus",     libxl_bitmap),
@@ -655,6 +668,7 @@ libxl_domain_build_info = Struct("domain_build_info",[
     # Alternate p2m is not bound to any architecture or guest type, as it is
     # supported by x86 HVM and ARM support is planned.
     ("altp2m", libxl_altp2m_mode),
+    ("guest_pm", libxl_guest_pm_info),
 
     # Size of preallocated vmtrace trace buffers (in KBYTES).
     # Use zero value to disable this feature.
