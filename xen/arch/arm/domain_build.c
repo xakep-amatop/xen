@@ -41,6 +41,9 @@ integer_param("dom0_max_vcpus", opt_dom0_max_vcpus);
 static bool __initdata opt_ext_regions = true;
 boolean_param("ext_regions", opt_ext_regions);
 
+static bool __initdata dom0_vscmi = true;
+boolean_param("dom0_vscmi", dom0_vscmi);
+
 static u64 __initdata dom0_mem;
 static bool __initdata dom0_mem_set;
 
@@ -1449,10 +1452,13 @@ static int __init make_cpus_node(const struct domain *d, void *fdt)
                 return res;
         }
 
-        cells[1] = cpu_to_fdt32(cpu);
-        res = fdt_property(fdt, "clocks", &cells, sizeof(cells));
-        if ( res )
-            return res;
+        if ( dom0_vscmi )
+        {
+            cells[1] = cpu_to_fdt32(cpu);
+            res = fdt_property(fdt, "clocks", &cells, sizeof(cells));
+            if ( res )
+                return res;
+        }
 
         res = fdt_end_node(fdt);
         if ( res )
@@ -2318,9 +2324,13 @@ static int __init handle_node(struct domain *d, struct kernel_info *kinfo,
             if ( res )
                 return res;
         }
-        res = make_scmi_nodes(d, kinfo, kinfo->fdt);
-        if ( res )
-            return res;
+        if ( dom0_vscmi )
+        {
+
+            res = make_scmi_nodes(d, kinfo, kinfo->fdt);
+            if ( res )
+                return res;
+        }
     }
 
     res = fdt_end_node(kinfo->fdt);
@@ -3308,9 +3318,12 @@ static int __init construct_dom0(struct domain *d)
     if ( rc < 0 )
         return rc;
 
-    rc = domain_vscmi_init(d, gaddr_to_gfn(kinfo.scmi_shmem));
-    if ( rc < 0 )
-        return rc;
+    if ( dom0_vscmi )
+    {
+        rc = domain_vscmi_init(d, gaddr_to_gfn(kinfo.scmi_shmem));
+        if ( rc < 0 )
+            return rc;
+    }
 
     return construct_domain(d, &kinfo);
 }
