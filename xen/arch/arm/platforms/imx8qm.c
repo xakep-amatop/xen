@@ -6,6 +6,8 @@
  * Copyright (c) 2016 Freescale Inc.
  * Copyright 2018 NXP
  *
+ * Copyright 2019 NXP
+ *
  * Peng Fan <peng.fan@nxp.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -291,6 +293,28 @@ static bool imx8qm_smc(struct cpu_user_regs *regs)
 
     return true;
 }
+
+#define FSL_HVC_SC     0xc6000000
+extern int imx8_sc_rpc(unsigned long x1, unsigned long x2);
+static bool imx8qm_handle_hvc(struct cpu_user_regs *regs)
+{
+    int err;
+
+    switch (regs->x0)
+    {
+    case FSL_HVC_SC:
+        err = imx8_sc_rpc(regs->x1, regs->x2);
+        break;
+    default:
+        err = -ENOENT;
+        break;
+    }
+
+    regs->x0 = err;
+
+    return true;
+}
+
 
 int platform_deassign_dev(struct domain *d, struct dt_device_node *dev)
 {
@@ -739,6 +763,7 @@ PLATFORM_START(imx8qm, "i.MX 8")
     .reset = imx8qm_system_reset,
     .poweroff = imx8qm_system_off,
     .smc = imx8qm_smc,
+    .handle_hvc = imx8qm_handle_hvc,
     .domain_destroy = imx8qm_domain_destroy,
     .domain_create = imx8qm_domain_create,
     .do_domctl = imx8qm_do_domctl,
