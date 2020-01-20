@@ -380,10 +380,10 @@ static struct iommu_group *iommu_group_get(struct device *dev)
 #define sCR0_BSU_MASK			0x3
 
 #define ARM_SMMU_GR0_sACR		0x10
-#define sACR_S2CRB_TLBEN                BIT(10, UL)
-#define sACR_MMUDISB_TLBEN              BIT(9, UL)
-#define sACR_SMTNMB_TLBEN               BIT(8, UL)
-#define sACR_IPA2PA_CEN                 BIT(4, UL)
+#define sACR_S2CRB_TLBEN		(1<<10)
+#define sACR_MMUDISB_TLBEN		(1<<9)
+#define sACR_SMTNMB_TLBEN		(1<<8)
+#define sACR_IPA2PA_CEN			(1<<4)
 
 /* Identification registers */
 #define ARM_SMMU_GR0_ID0		0x20
