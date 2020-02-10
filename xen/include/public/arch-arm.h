@@ -455,7 +455,7 @@ typedef uint64_t xen_callback_t;
  * address space) relies on the fact that the regions reserved for the RAM
  * below are big enough to also accommodate such regions.
  */
-#define GUEST_RAM0_BASE   xen_mk_ullong(0x40000000) /* 2GB of low RAM @ 1GB */
+#define GUEST_RAM0_BASE   xen_mk_ullong(0x80000000) /* 2GB of low RAM @ 2GB */
 #define GUEST_RAM0_SIZE   xen_mk_ullong(0x80000000)
 
 /* 4GB @ 4GB Prefetch Memory for VPCI */
