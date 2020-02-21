@@ -93,12 +93,12 @@ static int imx8qm_system_init(void)
 	    const char *name_str;
             prop = dt_get_property(np, "reg", NULL);
             if ( !prop )
+                printk("No u-boot partition ID provided\n");
+            else
             {
-                printk("Unable to find reg property\n");
-		continue;
+                imx8qm_doms[i].partition_id = fdt32_to_cpu(*prop);
+                printk("partition id %d\n", fdt32_to_cpu(*prop));
             }
-	    imx8qm_doms[i].partition_id = fdt32_to_cpu(*prop);
-	    printk("partition id %d\n", fdt32_to_cpu(*prop));
             ret = dt_property_read_string(np, "domain_name", &name_str);
 	    if (ret)
             {
