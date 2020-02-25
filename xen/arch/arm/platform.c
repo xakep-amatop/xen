@@ -183,6 +183,15 @@ int platform_domain_destroy(struct domain *d)
     return 0;
 }
 
+int platform_do_domctl(struct xen_domctl *domctl, struct domain *d,
+                       XEN_GUEST_HANDLE_PARAM(xen_domctl_t) u_domctl)
+{
+    if ( platform && platform->do_domctl )
+        return platform->do_domctl(domctl, d, u_domctl);
+
+    return 0;
+}
+
 /*
  * Local variables:
  * mode: C

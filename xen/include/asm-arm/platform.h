@@ -25,6 +25,9 @@ struct platform_desc {
     int (*domain_create)(struct domain *d,
                          struct xen_domctl_createdomain *config);
     int (*domain_destroy)(struct domain *d);
+    /* Platform specific domctl handler */
+    int (*do_domctl)(struct xen_domctl *domctl, struct domain *d,
+                     XEN_GUEST_HANDLE_PARAM(xen_domctl_t) u_domctl);
     /* Platform reset */
     void (*reset)(void);
     /* Platform power-off */
@@ -68,6 +71,8 @@ bool platform_device_is_blacklisted(const struct dt_device_node *node);
 int platform_domain_destroy(struct domain *d);
 int platform_domain_create(struct domain *d,
                          struct xen_domctl_createdomain *config);
+int platform_do_domctl(struct xen_domctl *domctl, struct domain *d,
+                       XEN_GUEST_HANDLE_PARAM(xen_domctl_t) u_domctl);
 
 #define PLATFORM_START(_name, _namestr)                         \
 static const struct platform_desc  __plat_desc_##_name __used   \

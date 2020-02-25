@@ -4,6 +4,7 @@
  * Copyright (c) 2012, Citrix Systems
  */
 
+#include <asm/platform.h>
 #include <xen/errno.h>
 #include <xen/guest_access.h>
 #include <xen/hypercall.h>
@@ -180,6 +181,9 @@ long arch_do_domctl(struct xen_domctl *domctl, struct domain *d,
         int rc;
 
         rc = subarch_do_domctl(domctl, d, u_domctl);
+
+        if ( rc == -ENOSYS )
+            rc = platform_do_domctl(domctl, d, u_domctl);
 
         if ( rc == -ENOSYS )
             rc = iommu_do_domctl(domctl, d, u_domctl);
