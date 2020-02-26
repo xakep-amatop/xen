@@ -135,6 +135,9 @@ static int imx8qm_system_init(void)
                     panic("Reading rsrcs Error\n");
                 imx8qm_doms[i].num_pad = rsrc_size >> 2;
 	    }
+
+            /* Mark this slot as occupied */
+            imx8qm_doms[i].domain_id = DOMID_INVALID;
         }
     }
 
