@@ -26,11 +26,16 @@
 #include <asm/platform.h>
 #include <asm/platforms/imx8qm.h>
 #include <asm/smccc.h>
+#include <main/imx8qm_pads.h>
 #include <xen/config.h>
 #include <xen/lib.h>
 #include <xen/vmap.h>
 #include <xen/mm.h>
 #include <xen/libfdt/libfdt.h>
+
+#ifndef SC_P_LAST
+#define SC_P_LAST (SC_P_COMP_CTL_GPIO_1V8_3V3_ENET_ENETA + 1)
+#endif
 
 static const char * const imx8qm_dt_compat[] __initconst =
 {
@@ -72,6 +77,34 @@ struct imx8qm_domain {
  */
 static struct imx8qm_domain imx8qm_doms[QM_NUM_DOMAIN];
 static struct imx8qm_rsrc_sid rsrc_sid[QM_NUM_DOMAIN];
+
+static u32 imx8qm_xen_mu_res_id;
+
+/* Get the resource ID of the messaging unit used by Xen. */
+int __init imx8_get_xen_mu_rsrc_id(void)
+{
+    struct dt_device_node *np;
+    u32 mu_id = SC_R_MU_1A;
+
+    np = dt_find_compatible_node(NULL, NULL, "fsl,imx8-mu");
+    if (!np)
+    {
+        printk(XENLOG_ERR "No Xen MU entry defined in device tree\n");
+        goto fail;
+    }
+
+    if (!dt_property_read_u32(np, "fsl,sc_rsrc_id", &mu_id))
+        printk(XENLOG_ERR
+               "No resource ID defined for Xen MU, assuming SC_R_MU_1A\n");
+    else
+        goto fail;
+
+    return mu_id;
+
+fail:
+    printk(XENLOG_INFO "Using resource %d as Xen MU\n", mu_id);
+    return mu_id;
+}
 
 static int imx8qm_system_init(void)
 {
@@ -126,6 +159,16 @@ static int imx8qm_system_init(void)
                     panic("Reading rsrcs Error\n");
                 imx8qm_doms[i].num_rsrc = rsrc_size >> 2;
 	    }
+
+            if ( imx8qm_doms[i].rsrcs[0] == SC_R_ALL )
+            {
+                int k;
+
+                for (k = 0; k < SC_R_LAST; k++)
+                    imx8qm_doms[i].rsrcs[k] = k;
+                imx8qm_doms[i].num_rsrc = k;
+            }
+
 	    prop = dt_get_property(np, "pads", &rsrc_size);
 	    if (prop)
             {
@@ -134,7 +177,15 @@ static int imx8qm_system_init(void)
                                                 rsrc_size >> 2))
                     panic("Reading rsrcs Error\n");
                 imx8qm_doms[i].num_pad = rsrc_size >> 2;
-	    }
+            }
+
+            if ( imx8qm_doms[i].pads[0] == SC_P_ALL )
+            {
+                int k;
+                for (k = 0; k < SC_P_LAST; k++)
+                    imx8qm_doms[i].pads[k] = k;
+                imx8qm_doms[i].num_pad = k;
+            }
 
             /* Mark this slot as occupied */
             imx8qm_doms[i].domain_id = DOMID_INVALID;
@@ -142,6 +193,8 @@ static int imx8qm_system_init(void)
     }
 
     imx8_mu_init();
+
+    imx8qm_xen_mu_res_id = imx8_get_xen_mu_rsrc_id();
 
     return 0;
 }
@@ -217,11 +270,184 @@ static bool imx8qm_smc(struct cpu_user_regs *regs)
     return true;
 }
 
+static int imx8qm_domd_move_resources(int domd_idx)
+{
+    sc_rm_pt_t parent_part, os_part;
+    int i, j;
+    sc_err_t sci_err;
+
+    /*
+     * DomD initially owns all the resources/pads, but we want it only
+     * have the resources not assigned to other guest domains.
+     * On DomD start, after its partition created, go over all guests'
+     * resources and remove those from DomD in advance.
+     */
+    os_part = imx8qm_doms[domd_idx].partition_id;
+    parent_part = imx8qm_doms[domd_idx].partition_id_parent;
+
+    sci_err = sc_rm_set_resource_movable(mu_ipcHandle, SC_R_ALL, SC_R_ALL,
+                                         SC_TRUE);
+    if ( sci_err != SC_ERR_NONE )
+    {
+        printk(XENLOG_ERR "Failed to set all resources movable, err: %d\n",
+               sci_err);
+        return sci_err;
+    }
+
+    sci_err = sc_rm_set_pad_movable(mu_ipcHandle, SC_P_ALL, SC_P_ALL, SC_TRUE);
+    if ( sci_err != SC_ERR_NONE )
+    {
+        printk(XENLOG_ERR "Failed to set all pads movable, err: %d\n", sci_err);
+        return sci_err;
+    }
+
+    sci_err = sc_rm_set_resource_movable(mu_ipcHandle,
+                                         imx8qm_xen_mu_res_id,
+                                         imx8qm_xen_mu_res_id,
+                                         SC_FALSE);
+    if ( sci_err != SC_ERR_NONE )
+    {
+        printk(XENLOG_ERR
+               "Failed to set Xen MU resource as not movable, err: %d\n",
+               sci_err);
+        return sci_err;
+    }
+
+    /* Do not move resources assigned for other domains */
+    for (i = 0; i < QM_NUM_DOMAIN; i++)
+    {
+        if ( i == domd_idx )
+            continue;
+
+        for (j = 0; j < imx8qm_doms[i].init_on_num_rsrc; j++)
+        {
+            sci_err = sc_rm_set_resource_movable(mu_ipcHandle,
+                                                 imx8qm_doms[i].init_on_rsrcs[j],
+                                                 imx8qm_doms[i].init_on_rsrcs[j],
+                                                 SC_FALSE);
+            if ( sci_err != SC_ERR_NONE )
+            {
+                printk(XENLOG_ERR
+                       "Failed to set resource %d as not movable, err: %d\n",
+                       imx8qm_doms[i].rsrcs[j], sci_err);
+                return sci_err;
+	    }
+        }
+
+        for (j = 0; j < imx8qm_doms[i].num_rsrc; j++)
+        {
+            sci_err = sc_rm_set_resource_movable(mu_ipcHandle,
+                                                 imx8qm_doms[i].rsrcs[j],
+                                                 imx8qm_doms[i].rsrcs[j],
+                                                 SC_FALSE);
+            if ( sci_err != SC_ERR_NONE )
+            {
+                printk(XENLOG_ERR
+                       "Failed to set resource %d as not movable, err: %d\n",
+                       imx8qm_doms[i].rsrcs[j], sci_err);
+                return sci_err;
+	    }
+        }
+
+        for (j = 0; j < imx8qm_doms[i].num_pad; j++)
+        {
+            sci_err = sc_rm_set_pad_movable(mu_ipcHandle,
+                                            imx8qm_doms[i].pads[j],
+                                            imx8qm_doms[i].pads[j],
+                                            SC_FALSE);
+            if ( sci_err != SC_ERR_NONE )
+            {
+                printk(XENLOG_ERR
+                       "Failed to set pad %d as not movable, err: %d\n",
+                       imx8qm_doms[i].pads[j], sci_err);
+                return sci_err;
+	    }
+        }
+
+    }
+
+    /* Move all the resources and pads left to DomD */
+    sci_err = sc_rm_move_all(mu_ipcHandle, parent_part, os_part,
+                             SC_TRUE, SC_TRUE);
+    if ( sci_err != SC_ERR_NONE )
+        printk(XENLOG_ERR
+               "Failed to move move all resources/pads, err: %d\n",
+               sci_err);
+
+    return sci_err;
+}
+
+static int imx8qm_domu_move_resources(int domu_idx)
+{
+    sc_rm_pt_t parent_part, os_part;
+    int j;
+    sc_err_t sci_err;
+
+    os_part = imx8qm_doms[domu_idx].partition_id;
+    parent_part = imx8qm_doms[domu_idx].partition_id_parent;
+
+    for (j = 0; j < imx8qm_doms[domu_idx].init_on_num_rsrc; j++)
+    {
+        sci_err = sc_rm_set_resource_movable(mu_ipcHandle,
+                                             imx8qm_doms[domu_idx].init_on_rsrcs[j],
+                                             imx8qm_doms[domu_idx].init_on_rsrcs[j],
+                                             SC_FALSE);
+        if ( sci_err != SC_ERR_NONE )
+        {
+            printk(XENLOG_ERR
+                   "Failed to set resource %d as not movable, err: %d\n",
+                   imx8qm_doms[domu_idx].rsrcs[j], sci_err);
+            return sci_err;
+        }
+    }
+
+    for (j = 0; j < imx8qm_doms[domu_idx].num_rsrc; j++)
+    {
+        sci_err = sc_rm_set_resource_movable(mu_ipcHandle,
+                                             imx8qm_doms[domu_idx].rsrcs[j],
+                                             imx8qm_doms[domu_idx].rsrcs[j],
+                                             SC_FALSE);
+        if ( sci_err != SC_ERR_NONE )
+        {
+            printk(XENLOG_ERR
+                   "Failed to set resource %d as not movable, err: %d\n",
+                   imx8qm_doms[domu_idx].rsrcs[j], sci_err);
+            return sci_err;
+        }
+    }
+
+    for (j = 0; j < imx8qm_doms[domu_idx].num_pad; j++)
+    {
+        sci_err = sc_rm_set_pad_movable(mu_ipcHandle,
+                                        imx8qm_doms[domu_idx].pads[j],
+                                        imx8qm_doms[domu_idx].pads[j],
+                                        SC_FALSE);
+        if ( sci_err != SC_ERR_NONE )
+        {
+            printk(XENLOG_ERR
+                   "Failed to set pad %d as not movable, err: %d\n",
+                   imx8qm_doms[domu_idx].pads[j], sci_err);
+            return sci_err;
+        }
+    }
+
+    /* Move all the resources and pads left to DomD */
+    sci_err = sc_rm_move_all(mu_ipcHandle, parent_part, os_part,
+                             SC_TRUE, SC_TRUE);
+    if ( sci_err != SC_ERR_NONE )
+        printk(XENLOG_ERR
+               "Failed to move move all resources/pads, err: %d\n",
+               sci_err);
+
+    return sci_err;
+}
+
 static int imx8qm_domain_create(struct domain *d,
                                 struct xen_domctl_createdomain *config)
 {
     unsigned int i, j;
     sc_err_t sci_err;
+    int ret;
 
     /* No need for control domain */
     if (d->domain_id == 0)
@@ -245,19 +471,20 @@ static int imx8qm_domain_create(struct domain *d,
         printk("****************************************************\n");
 
 	return 0;
-    } else {
-        for (j = 0; j < imx8qm_doms[i].init_on_num_rsrc; j++)
-        {
-            if (is_control_domain(current->domain))
-            {
-                printk("Power on resource %d\n", imx8qm_doms[i].init_on_rsrcs[j]);
-                sci_err = sc_pm_set_resource_power_mode(mu_ipcHandle, imx8qm_doms[i].init_on_rsrcs[j], SC_PM_PW_MODE_ON);
-                if (sci_err != SC_ERR_NONE)
-                    printk("power on resource %d err: %d\n", imx8qm_doms[i].init_on_rsrcs[j], sci_err);
+    }
 
-            }
+    for (j = 0; j < imx8qm_doms[i].init_on_num_rsrc; j++)
+    {
+        if (is_control_domain(current->domain))
+        {
+            printk("Power on resource %d\n", imx8qm_doms[i].init_on_rsrcs[j]);
+            sci_err = sc_pm_set_resource_power_mode(mu_ipcHandle, imx8qm_doms[i].init_on_rsrcs[j], SC_PM_PW_MODE_ON);
+            if (sci_err != SC_ERR_NONE)
+                printk("power on resource %d err: %d\n", imx8qm_doms[i].init_on_rsrcs[j], sci_err);
+
         }
     }
+
     /* Not control domain */
     if (dt_machine_is_compatible("fsl,imx8qm"))
     {
@@ -272,23 +499,44 @@ static int imx8qm_domain_create(struct domain *d,
 	imx8qm_doms[i].partition_id_parent = parent_part;
 
 	sci_err = sc_rm_set_parent(mu_ipcHandle, os_part, parent_part);
+
+        printk(XENLOG_INFO
+               "Assigning resources and pads for %s's partition %d, parent %d\n",
+               imx8qm_doms[i].dom_name, os_part, parent_part);
+
+        /* TODO: Find better way to understand that this is the driver domain. */
+        if ( !strncmp(config->arch.dom_name, "DomD", 5) )
+            ret = imx8qm_domd_move_resources(i);
+        else
+            ret = imx8qm_domu_move_resources(i);
+
+        if ( ret )
+            return ret;
+
         for (j = 0; j < imx8qm_doms[i].num_rsrc; j++)
         {
-            if (is_control_domain(current->domain))
+            if ( is_control_domain(current->domain) &&
+                 sc_rm_is_resource_owned(mu_ipcHandle, imx8qm_doms[i].rsrcs[j]) &&
+                 (imx8qm_doms[i].rsrcs[j] != imx8qm_xen_mu_res_id ) )
             {
                 sci_err = sc_rm_assign_resource(mu_ipcHandle, os_part, imx8qm_doms[i].rsrcs[j]);
-		if (sci_err != SC_ERR_NONE)
-			printk("assign resource error %d %d\n", imx8qm_doms[i].rsrcs[j], sci_err);
+                if (sci_err != SC_ERR_NONE)
+                        printk("assign resource error %d %d\n", imx8qm_doms[i].rsrcs[j], sci_err);
 	    }
         }
 
         for (j = 0; j < imx8qm_doms[i].num_pad; j++)
         {
-            if (is_control_domain(current->domain))
+            if ( is_control_domain(current->domain) &&
+                 sc_rm_is_pad_owned(mu_ipcHandle, imx8qm_doms[i].pads[j]) )
             {
                 sci_err = sc_rm_assign_pad(mu_ipcHandle, os_part, imx8qm_doms[i].pads[j]);
 		if (sci_err != SC_ERR_NONE)
-			printk("assign pad error %d %d\n", imx8qm_doms[i].pads[j], sci_err);
+			printk("assign pad error %d %d owned %d\n",
+                               imx8qm_doms[i].pads[j], sci_err,
+                               sc_rm_is_pad_owned(mu_ipcHandle,
+                                                  imx8qm_doms[i].pads[j]));
+
 	    }
         }
     }
