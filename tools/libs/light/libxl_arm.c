@@ -964,7 +964,8 @@ static int copy_node_by_path(libxl__gc *gc, const char *path,
  *  - /aliases node
  */
 static int copy_partial_fdt(libxl__gc *gc, void *fdt, void *pfdt,
-                            const libxl_domain_build_info *info)
+                            const libxl_domain_build_info *info,
+                            uint32_t guest_domid)
 {
     int i, r;
 
@@ -986,6 +987,15 @@ static int copy_partial_fdt(libxl__gc *gc, void *fdt, void *pfdt,
         if (r < 0 && r != -FDT_ERR_NOTFOUND) {
             LOG(ERROR, "Can't copy the node \"%s\" from the partial FDT",
                 info->dt_passthrough_nodes[i]);
+            return r;
+        }
+
+        /* Propagate this node to the Hypervisor's platform code. */
+        r = xc_domctl_passthrough_dtdev(CTX->xch, guest_domid,
+                                        info->dt_passthrough_nodes[i]);
+        if (r < 0)
+        {
+            LOG(ERROR, "xc_domctl_passthrough_dtdev failed: %d", r);
             return r;
         }
     }
@@ -1132,8 +1142,9 @@ next_resize:
         if (d_config->num_pcidevs)
             FDT( make_vpci_node(gc, fdt, ainfo, dom) );
 
-        if (pfdt)
-            FDT( copy_partial_fdt(gc, fdt, pfdt, info) );
+        if (pfdt) {
+            FDT( copy_partial_fdt(gc, fdt, pfdt, info, dom->guest_domid) );
+        }
 
         FDT( fdt_end_node(fdt) );
 
