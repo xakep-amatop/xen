@@ -774,6 +774,33 @@ int platform_assign_dev(struct domain *d, u8 devfn, struct dt_device_node *dev, 
     return 0;
 }
 
+int imx8qm_do_domctl(struct xen_domctl *domctl, struct domain *d,
+                     XEN_GUEST_HANDLE_PARAM(xen_domctl_t) u_domctl)
+{
+    int ret = -ENOSYS;
+
+    switch ( domctl->cmd )
+    {
+    case XEN_DOMCTL_platform:
+        {
+            struct xen_domctl_platform *op = &domctl->u.domctl_platform;
+
+            switch ( op->cmd )
+            {
+            default:
+                ret = -EINVAL;
+                break;
+            }
+        }
+        break;
+
+    default:
+        break;
+    }
+
+    return ret;
+}
+
 PLATFORM_START(imx8qm, "i.MX 8")
     .compatible = imx8qm_dt_compat,
     .init = imx8qm_system_init,
@@ -783,6 +810,7 @@ PLATFORM_START(imx8qm, "i.MX 8")
     .smc = imx8qm_smc,
     .domain_destroy = imx8qm_domain_destroy,
     .domain_create = imx8qm_domain_create,
+    .do_domctl = imx8qm_do_domctl,
 PLATFORM_END
 
 /*
