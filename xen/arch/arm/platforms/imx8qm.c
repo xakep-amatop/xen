@@ -28,6 +28,8 @@
 #include <asm/smccc.h>
 #include <main/imx8qm_pads.h>
 #include <xen/config.h>
+#include <xen/err.h>
+#include <xen/guest_access.h>
 #include <xen/lib.h>
 #include <xen/vmap.h>
 #include <xen/mm.h>
@@ -774,6 +776,53 @@ int platform_assign_dev(struct domain *d, u8 devfn, struct dt_device_node *dev, 
     return 0;
 }
 
+static void passthrough_dtdev_dump_list(const struct dt_device_node *np,
+                                       const char *prop_name)
+{
+    u32 len;
+    const __be32 *val;
+    int i;
+
+    /*
+     * If property is not found it means that either the corresponding
+     * passthrough device doesn't have any or this is a real bug
+     * as device needs its resources/pads to be defined.
+     * There no means to distinguish that, so do not report an error.
+     */
+    val = dt_get_property(np, prop_name, &len);
+    if ( !val )
+        return;
+
+    /* len is in octets, we expect arrays of u32. */
+    len /= sizeof(u32);
+    printk(XENLOG_DEBUG "\t%s has %d entries\n", prop_name, len);
+    for (i = 0; i < len; i++)
+        printk(XENLOG_DEBUG "\t\t%d\n", be32_to_cpup(val++));
+}
+
+static int handle_passthrough_dtdev(u32 domid, const char *path)
+{
+    struct dt_device_node *np;
+
+    np = dt_find_node_by_path(path);
+    if ( !np )
+    {
+        printk(XENLOG_ERR "Passthrough device %s not found for domid %d\n",
+               path, domid);
+        return -EINVAL;
+    }
+
+    printk(XENLOG_DEBUG "Found passthrough device %s for domid %d\n",
+           path, domid);
+
+    /* Read any resources and pads if this device has any. */
+    passthrough_dtdev_dump_list(np, "fsl,sc_init_on_rsrc_id");
+    passthrough_dtdev_dump_list(np, "fsl,sc_always_on_rsrc_id");
+    passthrough_dtdev_dump_list(np, "fsl,sc_rsrc_id");
+    passthrough_dtdev_dump_list(np, "fsl,sc_pad_id");
+    return 0;
+}
+
 int imx8qm_do_domctl(struct xen_domctl *domctl, struct domain *d,
                      XEN_GUEST_HANDLE_PARAM(xen_domctl_t) u_domctl)
 {
@@ -787,6 +836,23 @@ int imx8qm_do_domctl(struct xen_domctl *domctl, struct domain *d,
 
             switch ( op->cmd )
             {
+            case XEN_DOMCTL_PLATFORM_OP_PASSTHROUGH_DTDEV:
+                {
+                    char *path;
+
+                    path = safe_copy_string_from_guest(op->u.passthrough_dtdev.path,
+                                                       op->u.passthrough_dtdev.size,
+                                                       PAGE_SIZE);
+                    if ( IS_ERR(path) )
+                    {
+                        ret = PTR_ERR(path);
+                        break;
+                    }
+
+                    ret = handle_passthrough_dtdev(domctl->domain, path);
+                    xfree(path);
+                    break;
+                }
             default:
                 ret = -EINVAL;
                 break;
