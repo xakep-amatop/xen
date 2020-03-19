@@ -71,6 +71,29 @@ struct imx8qm_domain {
     u32 pads[512];
 };
 
+static int SC_ERR_TO_POSIX[] =
+{
+    0,             /* SC_ERR_NONE, 0 */
+    ECONNREFUSED,  /* SC_ERR_VERSION */
+    EINVAL,        /* SC_ERR_CONFIG */
+    EINVAL,        /* SC_ERR_PARM */
+    EACCES,        /* SC_ERR_NOACCESS */
+    EPERM,         /* SC_ERR_LOCKED */
+    EAGAIN,        /* SC_ERR_UNAVAILABLE */
+    ENOENT,        /* SC_ERR_NOTFOUND */
+    ENODEV,        /* SC_ERR_NOPOWER */
+    EIO,           /* SC_ERR_IPC */
+    EBUSY,         /* SC_ERR_BUSY */
+    EFAULT         /* SC_ERR_FAIL */
+};
+
+static int __maybe_unused sc_err_to_posix(int sc)
+{
+    if ( sc < SC_ERR_LAST )
+        return SC_ERR_TO_POSIX[sc];
+    return -EINVAL;
+}
+
 #define QM_NUM_DOMAIN	8
 /*
  * 8 user domains
