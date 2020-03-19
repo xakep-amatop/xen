@@ -26,18 +26,29 @@
 #include <asm/platform.h>
 #include <asm/platforms/imx8qm.h>
 #include <asm/smccc.h>
-#include <main/imx8qm_pads.h>
 #include <xen/config.h>
 #include <xen/err.h>
 #include <xen/guest_access.h>
 #include <xen/lib.h>
+#include <xen/list.h>
 #include <xen/vmap.h>
 #include <xen/mm.h>
 #include <xen/libfdt/libfdt.h>
 
-#ifndef SC_P_LAST
-#define SC_P_LAST (SC_P_COMP_CTL_GPIO_1V8_3V3_ENET_ENETA + 1)
-#endif
+#undef IMX8QM_PLAT_DEBUG
+
+/*
+ * We expect no more than the below number of always on resources.
+ * The number seems reasonable as these resources are rather exceptions
+ * than the normal cases.
+ */
+#define SC_R_ALWAYS_ON_LAST     32
+
+/*
+ * We expect not more than the below number of resources which need
+ * SMMU's stream ID to be set.
+ */
+#define SC_R_SID_LAST           32
 
 static const char * const imx8qm_dt_compat[] __initconst =
 {
@@ -45,30 +56,12 @@ static const char * const imx8qm_dt_compat[] __initconst =
     NULL
 };
 
-/*
- * Used for non-privileged domain, the dom_name needs to be same in dom0 dts
- * and cfg file.
- */
-struct imx8qm_rsrc_sid {
-	uint32_t domain_id;
-	uint32_t partition_id;
-	uint32_t rsrc_index;
-	struct dt_device_node *node[SC_R_LAST];
-	uint32_t rsrc[SC_R_LAST];
-	uint32_t sid[SC_R_LAST];
-};
-
 struct imx8qm_domain {
     domid_t domain_id;
     u32 partition_id;
     u32 partition_id_parent;
-    char dom_name[256];
-    u32 init_on_num_rsrc;
-    u32 init_on_rsrcs[32];
-    u32 num_rsrc;
-    u32 rsrcs[SC_R_LAST];
-    u32 num_pad;
-    u32 pads[512];
+    u32 always_on_num_rsrc;
+    u32 always_on_rsrcs[SC_R_ALWAYS_ON_LAST];
 };
 
 static int SC_ERR_TO_POSIX[] =
@@ -87,140 +80,128 @@ static int SC_ERR_TO_POSIX[] =
     EFAULT         /* SC_ERR_FAIL */
 };
 
-static int __maybe_unused sc_err_to_posix(int sc)
+static int sc_err_to_posix(int sc)
 {
     if ( sc < SC_ERR_LAST )
         return SC_ERR_TO_POSIX[sc];
     return -EINVAL;
 }
 
-#define QM_NUM_DOMAIN	8
-/*
- * 8 user domains
- * TODo: use locks to protect the data, currently we only has 2 domains,
- * so it is ok.
- */
-static struct imx8qm_domain imx8qm_doms[QM_NUM_DOMAIN];
-static struct imx8qm_rsrc_sid rsrc_sid[QM_NUM_DOMAIN];
-
-static u32 imx8qm_xen_mu_res_id;
-
-/* Get the resource ID of the messaging unit used by Xen. */
-int __init imx8_get_xen_mu_rsrc_id(void)
+static int imx8qm_alloc_partition(struct imx8qm_domain *dom)
 {
-    struct dt_device_node *np;
-    u32 mu_id = SC_R_MU_1A;
+    sc_rm_pt_t parent_part, os_part;
+    sc_err_t sci_err;
 
-    np = dt_find_compatible_node(NULL, NULL, "fsl,imx8-mu");
-    if (!np)
-    {
-        printk(XENLOG_ERR "No Xen MU entry defined in device tree\n");
-        goto fail;
-    }
-
-    if (!dt_property_read_u32(np, "fsl,sc_rsrc_id", &mu_id))
-        printk(XENLOG_ERR
-               "No resource ID defined for Xen MU, assuming SC_R_MU_1A\n");
-    else
+    sci_err = sc_rm_get_partition(mu_ipcHandle, &parent_part);
+    if ( sci_err != SC_ERR_NONE )
         goto fail;
 
-    return mu_id;
+    sci_err = sc_rm_partition_alloc(mu_ipcHandle, &os_part, false, false,
+                                    false, true, false);
+    if ( sci_err != SC_ERR_NONE )
+        goto fail;
+
+    sci_err = sc_rm_set_parent(mu_ipcHandle, os_part, parent_part);
+    if ( sci_err != SC_ERR_NONE )
+        goto fail;
+
+    dom->partition_id = os_part;
+    dom->partition_id_parent = parent_part;
+
+    printk(XENLOG_DEBUG "Allocated partition %d, parent %d\n",
+           os_part, parent_part);
+    return 0;
 
 fail:
-    printk(XENLOG_INFO "Using resource %d as Xen MU\n", mu_id);
-    return mu_id;
+    return sc_err_to_posix(sci_err);
 }
 
-static int imx8qm_system_init(void)
+static int imx8qm_domain_create(struct domain *d,
+                                struct xen_domctl_createdomain *config)
 {
-    struct dt_device_node *np = NULL;
-    unsigned int i, rsrc_size;
+    struct imx8qm_domain *dom;
     int ret;
 
-    while ((np = dt_find_compatible_node(np, NULL, "xen,domu")))
+    /* Do nothing for the initial domain. */
+    if ( d->domain_id == 0 )
+        return 0;
+
+    printk(XENLOG_DEBUG "Creating new domain, domid %d\n", d->domain_id);
+    dom = xzalloc(struct imx8qm_domain);
+    if ( !dom )
+        return -ENOMEM;
+
+    ret = imx8qm_alloc_partition(dom);
+    if ( ret < 0 )
     {
-        for (i = 0; i < QM_NUM_DOMAIN; i++)
-        {
-	    /* 0 means unused, we ignore dom0 */
-            if (!imx8qm_doms[i].domain_id)
-                break;
-	}
-        if (i < QM_NUM_DOMAIN)
-        {
-            const __be32 *prop;
-	    const char *name_str;
-            prop = dt_get_property(np, "reg", NULL);
-            if ( !prop )
-                printk("No u-boot partition ID provided\n");
-            else
-            {
-                imx8qm_doms[i].partition_id = fdt32_to_cpu(*prop);
-                printk("partition id %d\n", fdt32_to_cpu(*prop));
-            }
-            ret = dt_property_read_string(np, "domain_name", &name_str);
-	    if (ret)
-            {
-                printk("No name property\n");
-                continue;
-            }
-            safe_strcpy(imx8qm_doms[i].dom_name, name_str);
-	    printk("Domain name %s\n", imx8qm_doms[i].dom_name);
-
-	    prop = dt_get_property(np, "init_on_rsrcs", &rsrc_size);
-	    if (prop)
-            {
-                if (!dt_property_read_u32_array(np, "init_on_rsrcs",
-                                                imx8qm_doms[i].init_on_rsrcs,
-                                                rsrc_size >> 2))
-                    panic("Reading init_on_rsrcs Error\n");
-                imx8qm_doms[i].init_on_num_rsrc = rsrc_size >> 2;
-	    }
-	    prop = dt_get_property(np, "rsrcs", &rsrc_size);
-	    if (prop)
-            {
-                if (!dt_property_read_u32_array(np, "rsrcs",
-                                                imx8qm_doms[i].rsrcs,
-                                                rsrc_size >> 2))
-                    panic("Reading rsrcs Error\n");
-                imx8qm_doms[i].num_rsrc = rsrc_size >> 2;
-	    }
-
-            if ( imx8qm_doms[i].rsrcs[0] == SC_R_ALL )
-            {
-                int k;
-
-                for (k = 0; k < SC_R_LAST; k++)
-                    imx8qm_doms[i].rsrcs[k] = k;
-                imx8qm_doms[i].num_rsrc = k;
-            }
-
-	    prop = dt_get_property(np, "pads", &rsrc_size);
-	    if (prop)
-            {
-                if (!dt_property_read_u32_array(np, "pads",
-                                                imx8qm_doms[i].pads,
-                                                rsrc_size >> 2))
-                    panic("Reading rsrcs Error\n");
-                imx8qm_doms[i].num_pad = rsrc_size >> 2;
-            }
-
-            if ( imx8qm_doms[i].pads[0] == SC_P_ALL )
-            {
-                int k;
-                for (k = 0; k < SC_P_LAST; k++)
-                    imx8qm_doms[i].pads[k] = k;
-                imx8qm_doms[i].num_pad = k;
-            }
-
-            /* Mark this slot as occupied */
-            imx8qm_doms[i].domain_id = DOMID_INVALID;
-        }
+        printk(XENLOG_ERR "Failed to allocate new partition, ret %d\n", ret);
+        goto fail;
     }
 
-    imx8_mu_init();
+    dom->domain_id = d->domain_id;
 
-    imx8qm_xen_mu_res_id = imx8_get_xen_mu_rsrc_id();
+    d->arch.plat_priv = (void *)dom;
+    return 0;
 
+fail:
+    xfree(dom);
+    return ret;
+}
+
+static void imx8qm_keep_always_on(struct imx8qm_domain *dom)
+{
+    sc_err_t sci_err;
+    int i;
+
+    /*
+     * Check if partition has always on resources and move those
+     * to the parent, so we do not power them off now.
+     */
+    if ( !dom->always_on_num_rsrc )
+        return;
+
+    printk(XENLOG_DEBUG "Preserving %d power on resource(s)\n",
+           dom->always_on_num_rsrc);
+    for (i = 0; i < dom->always_on_num_rsrc; i++)
+    {
+        sci_err = sc_rm_assign_resource(mu_ipcHandle, dom->partition_id_parent,
+                                        dom->always_on_rsrcs[i]);
+        if ( sci_err != SC_ERR_NONE )
+        {
+            printk(XENLOG_ERR
+                   "Failed to re-assign always on resource %d from partition %d to parent %d sci_err %d\n",
+                   dom->always_on_rsrcs[i],
+                   dom->partition_id, dom->partition_id_parent,
+                   sci_err);
+        }
+    }
+}
+
+static int imx8qm_domain_destroy(struct domain *d)
+{
+    struct imx8qm_domain *dom = (struct imx8qm_domain *)d->arch.plat_priv;
+    sc_err_t sci_err;
+
+    printk(XENLOG_DEBUG "Destroying domain, domid %d\n", d->domain_id);
+
+    imx8qm_keep_always_on(dom);
+
+    printk(XENLOG_DEBUG "Powering off partition %d, parent %d\n",
+           dom->partition_id, dom->partition_id_parent);
+    sci_err = sc_pm_set_resource_power_mode_all(mu_ipcHandle,
+                                                dom->partition_id,
+                                                SC_PM_PW_MODE_OFF,
+                                                SC_R_LAST);
+    if ( sci_err != SC_ERR_NONE )
+    {
+        printk(XENLOG_ERR
+               "Failed to power off partition %d, parent %d. Ignoring...\n",
+               dom->partition_id, dom->partition_id_parent);
+    }
+
+    sc_rm_partition_free(mu_ipcHandle, dom->partition_id);
+
+    xfree(dom);
     return 0;
 }
 
@@ -239,13 +220,21 @@ static int imx8qm_specific_mapping(struct domain *d)
     return 0;
 }
 
+static int imx8qm_system_init(void)
+{
+    return imx8_mu_init();
+}
+
 static void imx8qm_system_reset(void)
 {
-    int i;
-    for (i = 0; i < QM_NUM_DOMAIN; i++)
+    sc_rm_pt_t part_id;
+
+    if ( sc_rm_get_partition(mu_ipcHandle, &part_id) == SC_ERR_NONE )
     {
-        if (imx8qm_doms[i].partition_id)
-            sc_rm_partition_free(mu_ipcHandle, imx8qm_doms[i].partition_id);
+        printk(XENLOG_DEBUG "Powering off and freeing partition %d\n", part_id);
+        sc_pm_set_resource_power_mode_all(mu_ipcHandle, part_id,
+                                          SC_PM_PW_MODE_OFF, SC_R_LAST);
+        sc_rm_partition_free(mu_ipcHandle, part_id);
     }
     /* This is mainly for PSCI-0.2, which does not return if success. */
     call_psci_system_reset();
@@ -295,480 +284,92 @@ static bool imx8qm_smc(struct cpu_user_regs *regs)
     return true;
 }
 
-static int imx8qm_domd_move_resources(int domd_idx)
-{
-    sc_rm_pt_t parent_part, os_part;
-    int i, j;
-    sc_err_t sci_err;
-
-    /*
-     * DomD initially owns all the resources/pads, but we want it only
-     * have the resources not assigned to other guest domains.
-     * On DomD start, after its partition created, go over all guests'
-     * resources and remove those from DomD in advance.
-     */
-    os_part = imx8qm_doms[domd_idx].partition_id;
-    parent_part = imx8qm_doms[domd_idx].partition_id_parent;
-
-    sci_err = sc_rm_set_resource_movable(mu_ipcHandle, SC_R_ALL, SC_R_ALL,
-                                         SC_TRUE);
-    if ( sci_err != SC_ERR_NONE )
-    {
-        printk(XENLOG_ERR "Failed to set all resources movable, err: %d\n",
-               sci_err);
-        return sci_err;
-    }
-
-    sci_err = sc_rm_set_pad_movable(mu_ipcHandle, SC_P_ALL, SC_P_ALL, SC_TRUE);
-    if ( sci_err != SC_ERR_NONE )
-    {
-        printk(XENLOG_ERR "Failed to set all pads movable, err: %d\n", sci_err);
-        return sci_err;
-    }
-
-    sci_err = sc_rm_set_resource_movable(mu_ipcHandle,
-                                         imx8qm_xen_mu_res_id,
-                                         imx8qm_xen_mu_res_id,
-                                         SC_FALSE);
-    if ( sci_err != SC_ERR_NONE )
-    {
-        printk(XENLOG_ERR
-               "Failed to set Xen MU resource as not movable, err: %d\n",
-               sci_err);
-        return sci_err;
-    }
-
-    /* Do not move resources assigned for other domains */
-    for (i = 0; i < QM_NUM_DOMAIN; i++)
-    {
-        if ( i == domd_idx )
-            continue;
-
-        for (j = 0; j < imx8qm_doms[i].init_on_num_rsrc; j++)
-        {
-            sci_err = sc_rm_set_resource_movable(mu_ipcHandle,
-                                                 imx8qm_doms[i].init_on_rsrcs[j],
-                                                 imx8qm_doms[i].init_on_rsrcs[j],
-                                                 SC_FALSE);
-            if ( sci_err != SC_ERR_NONE )
-            {
-                printk(XENLOG_ERR
-                       "Failed to set resource %d as not movable, err: %d\n",
-                       imx8qm_doms[i].rsrcs[j], sci_err);
-                return sci_err;
-	    }
-        }
-
-        for (j = 0; j < imx8qm_doms[i].num_rsrc; j++)
-        {
-            sci_err = sc_rm_set_resource_movable(mu_ipcHandle,
-                                                 imx8qm_doms[i].rsrcs[j],
-                                                 imx8qm_doms[i].rsrcs[j],
-                                                 SC_FALSE);
-            if ( sci_err != SC_ERR_NONE )
-            {
-                printk(XENLOG_ERR
-                       "Failed to set resource %d as not movable, err: %d\n",
-                       imx8qm_doms[i].rsrcs[j], sci_err);
-                return sci_err;
-	    }
-        }
-
-        for (j = 0; j < imx8qm_doms[i].num_pad; j++)
-        {
-            sci_err = sc_rm_set_pad_movable(mu_ipcHandle,
-                                            imx8qm_doms[i].pads[j],
-                                            imx8qm_doms[i].pads[j],
-                                            SC_FALSE);
-            if ( sci_err != SC_ERR_NONE )
-            {
-                printk(XENLOG_ERR
-                       "Failed to set pad %d as not movable, err: %d\n",
-                       imx8qm_doms[i].pads[j], sci_err);
-                return sci_err;
-	    }
-        }
-
-    }
-
-    /* Move all the resources and pads left to DomD */
-    sci_err = sc_rm_move_all(mu_ipcHandle, parent_part, os_part,
-                             SC_TRUE, SC_TRUE);
-    if ( sci_err != SC_ERR_NONE )
-        printk(XENLOG_ERR
-               "Failed to move move all resources/pads, err: %d\n",
-               sci_err);
-
-    return sci_err;
-}
-
-static int imx8qm_domu_move_resources(int domu_idx)
-{
-    sc_rm_pt_t parent_part, os_part;
-    int j;
-    sc_err_t sci_err;
-
-    os_part = imx8qm_doms[domu_idx].partition_id;
-    parent_part = imx8qm_doms[domu_idx].partition_id_parent;
-
-    for (j = 0; j < imx8qm_doms[domu_idx].init_on_num_rsrc; j++)
-    {
-        sci_err = sc_rm_set_resource_movable(mu_ipcHandle,
-                                             imx8qm_doms[domu_idx].init_on_rsrcs[j],
-                                             imx8qm_doms[domu_idx].init_on_rsrcs[j],
-                                             SC_FALSE);
-        if ( sci_err != SC_ERR_NONE )
-        {
-            printk(XENLOG_ERR
-                   "Failed to set resource %d as not movable, err: %d\n",
-                   imx8qm_doms[domu_idx].rsrcs[j], sci_err);
-            return sci_err;
-        }
-    }
-
-    for (j = 0; j < imx8qm_doms[domu_idx].num_rsrc; j++)
-    {
-        sci_err = sc_rm_set_resource_movable(mu_ipcHandle,
-                                             imx8qm_doms[domu_idx].rsrcs[j],
-                                             imx8qm_doms[domu_idx].rsrcs[j],
-                                             SC_FALSE);
-        if ( sci_err != SC_ERR_NONE )
-        {
-            printk(XENLOG_ERR
-                   "Failed to set resource %d as not movable, err: %d\n",
-                   imx8qm_doms[domu_idx].rsrcs[j], sci_err);
-            return sci_err;
-        }
-    }
-
-    for (j = 0; j < imx8qm_doms[domu_idx].num_pad; j++)
-    {
-        sci_err = sc_rm_set_pad_movable(mu_ipcHandle,
-                                        imx8qm_doms[domu_idx].pads[j],
-                                        imx8qm_doms[domu_idx].pads[j],
-                                        SC_FALSE);
-        if ( sci_err != SC_ERR_NONE )
-        {
-            printk(XENLOG_ERR
-                   "Failed to set pad %d as not movable, err: %d\n",
-                   imx8qm_doms[domu_idx].pads[j], sci_err);
-            return sci_err;
-        }
-    }
-
-    /* Move all the resources and pads left to DomD */
-    sci_err = sc_rm_move_all(mu_ipcHandle, parent_part, os_part,
-                             SC_TRUE, SC_TRUE);
-    if ( sci_err != SC_ERR_NONE )
-        printk(XENLOG_ERR
-               "Failed to move move all resources/pads, err: %d\n",
-               sci_err);
-
-    return sci_err;
-}
-
-static int imx8qm_domain_create(struct domain *d,
-                                struct xen_domctl_createdomain *config)
-{
-    unsigned int i, j;
-    sc_err_t sci_err;
-    int ret;
-
-    /* No need for control domain */
-    if (d->domain_id == 0)
-        return 0;
-
-    for (i = 0; i < QM_NUM_DOMAIN; i++)
-    {
-        if (!strncmp(imx8qm_doms[i].dom_name, config->arch.dom_name, 256))
-        {
-            imx8qm_doms[i].domain_id = d->domain_id;
-	    break;
-	}
-    }
-
-    if (i == QM_NUM_DOMAIN)
-    {
-        printk("****************************************************\n");
-        printk("NOT FOUND A entry to power off passthrough resources\n");
-        printk("The dts node name needs to be same as name = \"xxx\"\n");
-        printk("in vm configuration file\n");
-        printk("****************************************************\n");
-
-	return 0;
-    }
-
-    for (j = 0; j < imx8qm_doms[i].init_on_num_rsrc; j++)
-    {
-        if (is_control_domain(current->domain))
-        {
-            printk("Power on resource %d\n", imx8qm_doms[i].init_on_rsrcs[j]);
-            sci_err = sc_pm_set_resource_power_mode(mu_ipcHandle, imx8qm_doms[i].init_on_rsrcs[j], SC_PM_PW_MODE_ON);
-            if (sci_err != SC_ERR_NONE)
-                printk("power on resource %d err: %d\n", imx8qm_doms[i].init_on_rsrcs[j], sci_err);
-
-        }
-    }
-
-    /* Not control domain */
-    if (dt_machine_is_compatible("fsl,imx8qm"))
-    {
-	sc_rm_pt_t parent_part, os_part;
-
-	sci_err = sc_rm_get_partition(mu_ipcHandle, &parent_part);
-	sci_err = sc_rm_partition_alloc(mu_ipcHandle, &os_part, false, false,
-                                                    false, true, false);
-
-	/* Overwrite uboot partition id */
-	imx8qm_doms[i].partition_id = os_part;
-	imx8qm_doms[i].partition_id_parent = parent_part;
-
-	sci_err = sc_rm_set_parent(mu_ipcHandle, os_part, parent_part);
-
-        printk(XENLOG_INFO
-               "Assigning resources and pads for %s's partition %d, parent %d\n",
-               imx8qm_doms[i].dom_name, os_part, parent_part);
-
-        /* TODO: Find better way to understand that this is the driver domain. */
-        if ( !strncmp(config->arch.dom_name, "DomD", 5) )
-            ret = imx8qm_domd_move_resources(i);
-        else
-            ret = imx8qm_domu_move_resources(i);
-
-        if ( ret )
-            return ret;
-
-        for (j = 0; j < imx8qm_doms[i].num_rsrc; j++)
-        {
-            if ( is_control_domain(current->domain) &&
-                 sc_rm_is_resource_owned(mu_ipcHandle, imx8qm_doms[i].rsrcs[j]) &&
-                 (imx8qm_doms[i].rsrcs[j] != imx8qm_xen_mu_res_id ) )
-            {
-                sci_err = sc_rm_assign_resource(mu_ipcHandle, os_part, imx8qm_doms[i].rsrcs[j]);
-                if (sci_err != SC_ERR_NONE)
-                        printk("assign resource error %d %d\n", imx8qm_doms[i].rsrcs[j], sci_err);
-	    }
-        }
-
-        for (j = 0; j < imx8qm_doms[i].num_pad; j++)
-        {
-            if ( is_control_domain(current->domain) &&
-                 sc_rm_is_pad_owned(mu_ipcHandle, imx8qm_doms[i].pads[j]) )
-            {
-                sci_err = sc_rm_assign_pad(mu_ipcHandle, os_part, imx8qm_doms[i].pads[j]);
-		if (sci_err != SC_ERR_NONE)
-			printk("assign pad error %d %d owned %d\n",
-                               imx8qm_doms[i].pads[j], sci_err,
-                               sc_rm_is_pad_owned(mu_ipcHandle,
-                                                  imx8qm_doms[i].pads[j]));
-
-	    }
-        }
-    }
-
-    return 0;
-}
-
-static int imx8qm_domain_destroy(struct domain *d)
-{
-    unsigned int i;
-    sc_err_t sci_err;
-    /* No need for control domain */
-    if (is_control_domain(d))
-        return 0;
-
-    for (i = 0; i < QM_NUM_DOMAIN; i++)
-    {
-        /* Find out the related resources */
-        if (imx8qm_doms[i].domain_id == d->domain_id)
-        {
-		printk("let's shutdown the domain resources\n");
-	        printk("partition id %d; domain_id %d\n", imx8qm_doms[i].partition_id, d->domain_id);
-		break;
-	}
-    }
-
-    if (i == QM_NUM_DOMAIN)
-        return 0;
-
-    if (imx8qm_doms[i].partition_id)
-    {
-        sci_err = sc_pm_set_resource_power_mode_all(mu_ipcHandle, imx8qm_doms[i].partition_id, SC_PM_PW_MODE_OFF, SC_R_LAST);
-        if (sci_err != SC_ERR_NONE)
-    	    printk("off partition %d err %d\n", imx8qm_doms[i].partition_id, sci_err);
-
-        sci_err = sc_rm_partition_free(mu_ipcHandle, imx8qm_doms[i].partition_id);
-        if (sci_err != SC_ERR_NONE)
-            printk("sc_rm_partition_free, err %d\n", sci_err);
-
-    }
-
-    for (i = 0; i < QM_NUM_DOMAIN; i++)
-    {
-        if (rsrc_sid[i].domain_id == d->domain_id)
-		memset(&rsrc_sid[i], 0, sizeof(rsrc_sid[0]));
-    }
-
-    return 0;
-}
-
 int platform_deassign_dev(struct domain *d, struct dt_device_node *dev)
 {
-    int i, j;
-    sc_err_t sci_err;
-
-    if (!dt_machine_is_compatible("fsl,imx8qm"))
-    {
-        return 0;
-    }
-    if (d->domain_id == 0)
-	    return 0;
-
-    for (i = 0; i < QM_NUM_DOMAIN; i++)
-    {
-        /* Find out the related resources */
-        if (imx8qm_doms[i].domain_id == d->domain_id)
-        {
-		break;
-	}
-    }
-
-    if (i == QM_NUM_DOMAIN)
-	    return 0;
-    if (!imx8qm_doms[i].partition_id)
-	    return 0;
-
-    sci_err = sc_pm_set_resource_power_mode_all(mu_ipcHandle, imx8qm_doms[i].partition_id, SC_PM_PW_MODE_OFF, SC_R_LAST);
-    if (sci_err != SC_ERR_NONE)
-	    printk("off partition %d err %d\n", imx8qm_doms[i].partition_id, sci_err);
-
-    printk("let's shutdown the domain resources\n");
-    printk("partition id %d; domain_id %d\n", imx8qm_doms[i].partition_id, d->domain_id);
-
-    imx8qm_doms[i].domain_id = 0xFFFF;
-
-    if (imx8qm_doms[i].partition_id)
-    {
-        for (j = 0; j < imx8qm_doms[i].num_rsrc; j++)
-        {
-                sci_err = sc_rm_assign_resource(mu_ipcHandle, imx8qm_doms[i].partition_id_parent, imx8qm_doms[i].rsrcs[j]);
-		if (sci_err != SC_ERR_NONE)
-			printk("assign resource error parent %d %d\n", imx8qm_doms[i].rsrcs[j], sci_err);
-        }
-	/*
-	 * The following is only to remove SID for M4, in future need to develop new method
-	 * to differetiate case without M4.
-	 */
-        sci_err = sc_rm_assign_resource(mu_ipcHandle, imx8qm_doms[i].partition_id_parent, SC_R_M4_1_PID0);
-	if (sci_err != SC_ERR_NONE)
-		printk("assign resource error parent %d %d\n", SC_R_M4_1_PID0, sci_err);
-        sci_err = sc_rm_assign_resource(mu_ipcHandle, imx8qm_doms[i].partition_id_parent, SC_R_M4_1_PID1);
-	if (sci_err != SC_ERR_NONE)
-		printk("assign resource error parent %d %d\n", SC_R_M4_1_PID1, sci_err);
-        sci_err = sc_rm_assign_resource(mu_ipcHandle, imx8qm_doms[i].partition_id_parent, SC_R_M4_1_PID2);
-	if (sci_err != SC_ERR_NONE)
-		printk("assign resource error parent %d %d\n", SC_R_M4_1_PID2, sci_err);
-        sci_err = sc_rm_assign_resource(mu_ipcHandle, imx8qm_doms[i].partition_id_parent, SC_R_M4_1_PID3);
-	if (sci_err != SC_ERR_NONE)
-		printk("assign resource error parent %d %d\n", SC_R_M4_1_PID3, sci_err);
-        sci_err = sc_rm_assign_resource(mu_ipcHandle, imx8qm_doms[i].partition_id_parent, SC_R_M4_1_PID4);
-	if (sci_err != SC_ERR_NONE)
-		printk("assign resource error parent %d %d\n", SC_R_M4_1_PID4, sci_err);
-
-        for (j = 0; j < imx8qm_doms[i].num_pad; j++)
-        {
-                sci_err = sc_rm_assign_pad(mu_ipcHandle, imx8qm_doms[i].partition_id_parent, imx8qm_doms[i].pads[j]);
-		if (sci_err != SC_ERR_NONE)
-			printk("assign pad error parent %d %d\n", imx8qm_doms[i].pads[j], sci_err);
-        }
-
-        sc_rm_partition_free(mu_ipcHandle, imx8qm_doms[i].partition_id);
-
-        imx8qm_doms[i].partition_id = 0;
-    }
-
-
-    for (i = 0; i < QM_NUM_DOMAIN; i++)
-    {
-        if (rsrc_sid[i].domain_id == d->domain_id)
-		memset(&rsrc_sid[i], 0, sizeof(rsrc_sid[0]));
-    }
-
     return 0;
 }
 
-int platform_assign_dev(struct domain *d, u8 devfn, struct dt_device_node *dev, u32 flag)
+int platform_assign_dev(struct domain *d, u8 devfn, struct dt_device_node *dev,
+                        u32 flag)
 {
-    const __be32 *prop;
-    uint32_t rsrcs[32]; 
-    uint32_t rsrc_size;
     struct dt_device_node *smmu_np;
     struct dt_phandle_args masterspec;
-    uint32_t i;
-    sc_err_t sci_err;
-    uint32_t index, rsrc_index;
+    const __be32 *prop;
+    u32 resource_id[SC_R_SID_LAST];
+    u32 len;
+    int i;
 
-    if (!dt_machine_is_compatible("fsl,imx8qm"))
-    {
-        return 0;
-    }
 
-    for (index = 0; index < QM_NUM_DOMAIN; index++)
-    {
-        if (rsrc_sid[index].domain_id == d->domain_id)
-		break;
-    }
-
-    if (index == QM_NUM_DOMAIN)
-    {
-        for (index = 0; index < QM_NUM_DOMAIN; index++)
-        {
-            if (rsrc_sid[index].domain_id == 0)
-            	break;
-        }
-    }
-
-    if (index == QM_NUM_DOMAIN)
-        return -1;
-
-    rsrc_sid[index].domain_id = d->domain_id;
-    rsrc_index = rsrc_sid[index].rsrc_index;
+#ifdef IMX8QM_PLAT_DEBUG
+    printk(XENLOG_ERR "Assigning device %s to domain %d\n",
+           dev->full_name, d->domain_id);
+#endif
 
     smmu_np = dt_find_compatible_node(NULL, NULL, "arm,mmu-500");
-    if (!smmu_np)
-	    return 0;
+    if ( !smmu_np )
+        return 0;
 
-    prop = dt_get_property(dev, "fsl,sc_rsrc_id", &rsrc_size);
-    if (prop)
+    /*
+     * Find out the resource ID that we need to set SMMU stream ID for.
+     * The device being assigned can have either resources assigned
+     * in its device tree node or in its power domain:
+     *   - look into "fsl,sc_rsrc_id" property and
+     *     take the very first resource ID
+     *   - look into the device's power domain for the resource ID
+     *
+     * XXX: if "fsl,sc_rsrc_id" is used then the very first resource ID
+     *      must be the one which is expects SID to be assigned.
+     */
+    prop = dt_get_property(dev, "fsl,sc_rsrc_id", &len);
+    if ( prop )
     {
-        if (!dt_property_read_u32_array(dev, "fsl,sc_rsrc_id", rsrcs, rsrc_size >> 2))
+        len /= sizeof(u32);
+        if ( len >= ARRAY_SIZE(resource_id) )
         {
-            printk("%s failed to get resource list\n", __func__);
-	    return -1;
-	}
+            printk(XENLOG_ERR
+                   "Device %s has more than %ld resources, ignoring the rest\n",
+                   dev->full_name, ARRAY_SIZE(resource_id));
+            len = ARRAY_SIZE(resource_id);
+        }
+        if ( !dt_property_read_u32_array(dev, "fsl,sc_rsrc_id",
+                                         resource_id, len) )
+        {
+            printk(XENLOG_ERR "Failed to get resource IDs\n");
+            return -EINVAL;
+        }
     }
     else
     {
         struct dt_device_node *pnode = NULL;
 
+        /* Get the handle to the power domain. */
         prop = dt_get_property(dev, "power-domains", NULL);
-	if (!prop)
+        if ( !prop )
         {
-            printk("%s no power domains\n", __func__);
-            return -1;
-	}
+            printk(XENLOG_ERR "Device %s has no power domains, can't assign\n",
+                   dev->full_name);
+            return -EINVAL;
+        }
+
+        /* Get the power domain's node. */
         pnode = dt_find_node_by_phandle(be32_to_cpup(prop));
-	if (!pnode)
+        if ( !pnode )
         {
-            printk("%s no power domain node\n", __func__);
-            return -1;
-	}
-	if (!dt_property_read_u32(pnode, "reg", rsrcs))
+            printk(XENLOG_ERR "Device %s has no power domain node\n",
+                   dev->full_name);
+            return -EINVAL;
+        }
+
+        /* Now get the resource ID of this power domain. */
+        if ( !dt_property_read_u32(pnode, "reg", &resource_id[0]) )
         {
-            printk("%s no reg node\n", __func__);
-            return -1;
+            printk(XENLOG_ERR "Device %s has no power domain node\n",
+                   dev->full_name);
+            return -EINVAL;
 	}
-	rsrc_size = 4;
+
+        /* Report single entry only. */
+        len = 1;
     }
 
     i = 0;
@@ -777,34 +378,91 @@ int platform_assign_dev(struct domain *d, u8 devfn, struct dt_device_node *dev, 
     {
         if (masterspec.np == dev)
         {
+            sc_err_t sci_err;
+            int j;
             u16 streamid = masterspec.args[0];
-	    int j;
-            /* Only 1 SID supported on i.MX8QM */
-	    for (j = 0; j < (rsrc_size >> 2); j++)
+
+            printk(XENLOG_DEBUG "Setting master SID 0x%x for %d resource(s) of %s\n",
+                   streamid, len, dev->full_name);
+            for (j = 0; j < len; j++)
             {
-                rsrc_sid[index].rsrc[rsrc_index] = rsrcs[j];
-                rsrc_sid[index].sid[rsrc_index] = streamid;
-                rsrc_sid[index].node[rsrc_index] = dev;
-		rsrc_index++;
-                sci_err = sc_rm_set_master_sid(mu_ipcHandle, rsrcs[j], streamid);
-                if (sci_err != SC_ERR_NONE)
-                    printk("set_master_sid resource %d sid 0x%x, err: %d\n", rsrcs[j], streamid, sci_err);
-	    }
+                sci_err = sc_rm_set_master_sid(mu_ipcHandle, resource_id[j],
+                                               streamid);
+                if ( sci_err != SC_ERR_NONE )
+                    printk(XENLOG_ERR
+                           "Failed to set master SID 0x%x for resource %d, err: %d\n",
+                           resource_id[j], streamid, sci_err);
+            }
 	}
         i++;
     }
-
-    rsrc_sid[index].rsrc_index = rsrc_index;
-
     return 0;
 }
 
-static void passthrough_dtdev_dump_list(const struct dt_device_node *np,
-                                       const char *prop_name)
+typedef sc_err_t (*clb_passthrough)(struct imx8qm_domain *dom, int id);
+
+static sc_err_t clb_passthrough_assign_resource(struct imx8qm_domain *dom,
+                                                int id)
+{
+#ifdef IMX8QM_PLAT_DEBUG
+    printk(XENLOG_DEBUG "Assigning resource %d domid %d\n",
+           id, dom->domain_id);
+#endif
+    return sc_rm_assign_resource(mu_ipcHandle, dom->partition_id, id);
+}
+
+static sc_err_t clb_passthrough_assign_pad(struct imx8qm_domain *dom,
+                                           int id)
+{
+#ifdef IMX8QM_PLAT_DEBUG
+    printk(XENLOG_DEBUG "Assigning pad %d domid %d\n",
+           id, dom->domain_id);
+#endif
+    return sc_rm_assign_pad(mu_ipcHandle, dom->partition_id, id);
+}
+
+static sc_err_t clb_passthrough_power_on_resource(struct imx8qm_domain *dom,
+                                                  int id)
+{
+    sc_err_t sci_err;
+
+    sci_err = clb_passthrough_assign_resource(dom, id);
+    if ( sci_err != SC_ERR_NONE )
+        return sci_err;
+
+    printk(XENLOG_DEBUG "Powering on resource %d domid %d\n",
+           id, dom->domain_id);
+    return sc_pm_set_resource_power_mode(mu_ipcHandle, id, SC_PM_PW_MODE_ON);
+}
+
+static sc_err_t clb_passthrough_add_always_on(struct imx8qm_domain *dom,
+                                              int id)
+{
+    int i;
+
+    printk(XENLOG_DEBUG "Adding always on resource %d domid %d\n",
+           id, dom->domain_id);
+
+    if ( dom->always_on_num_rsrc >= ARRAY_SIZE(dom->always_on_rsrcs) )
+        return SC_ERR_CONFIG;
+
+    /* Check if we already have this resource. */
+    for (i = 0; i < dom->always_on_num_rsrc; i++)
+        if ( dom->always_on_rsrcs[i] == id )
+            return SC_ERR_NONE;
+
+    dom->always_on_rsrcs[dom->always_on_num_rsrc++] = id;
+    return SC_ERR_NONE;
+}
+
+static int passthrough_dtdev_add_resources(struct imx8qm_domain *dom,
+                                           const struct dt_device_node *np,
+                                           const char *prop_name,
+                                           clb_passthrough clb)
 {
     u32 len;
     const __be32 *val;
-    int i;
+    int i, ret = 0;
 
     /*
      * If property is not found it means that either the corresponding
@@ -814,18 +472,35 @@ static void passthrough_dtdev_dump_list(const struct dt_device_node *np,
      */
     val = dt_get_property(np, prop_name, &len);
     if ( !val )
-        return;
+        return 0;
 
-    /* len is in octets, we expect arrays of u32. */
-    len /= sizeof(u32);
-    printk(XENLOG_DEBUG "\t%s has %d entries\n", prop_name, len);
-    for (i = 0; i < len; i++)
-        printk(XENLOG_DEBUG "\t\t%d\n", be32_to_cpup(val++));
+    /* len is in octets. */
+    for (i = 0; i < len / sizeof(u32); i++)
+    {
+        int id;
+        sc_err_t sci_err;
+
+        id = be32_to_cpup(val++);
+        sci_err = clb(dom, id);
+        if ( sci_err != SC_ERR_NONE )
+        {
+            printk(XENLOG_ERR
+                   "Failed to assign %d (%s %s) to domain id %d sci_err %d\n",
+                   id, np->full_name, prop_name, dom->domain_id, sci_err);
+            ret = sc_err_to_posix(sci_err);
+            break;
+        }
+    }
+
+    return ret;
 }
 
-static int handle_passthrough_dtdev(u32 domid, const char *path)
+static int handle_passthrough_dtdev(struct domain *d, const char *path)
 {
     struct dt_device_node *np;
+    struct imx8qm_domain *dom = (struct imx8qm_domain *)d->arch.plat_priv;
+    domid_t domid = d->domain_id;
+    int ret;
 
     np = dt_find_node_by_path(path);
     if ( !np )
@@ -835,14 +510,30 @@ static int handle_passthrough_dtdev(u32 domid, const char *path)
         return -EINVAL;
     }
 
-    printk(XENLOG_DEBUG "Found passthrough device %s for domid %d\n",
-           path, domid);
+#ifdef IMX8QM_PLAT_DEBUG
+    printk(XENLOG_ERR "Passthrough device %s for domid %d\n", path, domid);
+#endif
 
-    /* Read any resources and pads if this device has any. */
-    passthrough_dtdev_dump_list(np, "fsl,sc_init_on_rsrc_id");
-    passthrough_dtdev_dump_list(np, "fsl,sc_always_on_rsrc_id");
-    passthrough_dtdev_dump_list(np, "fsl,sc_rsrc_id");
-    passthrough_dtdev_dump_list(np, "fsl,sc_pad_id");
+    ret = passthrough_dtdev_add_resources(dom, np, "fsl,sc_init_on_rsrc_id",
+                                          clb_passthrough_power_on_resource);
+    if ( ret < 0 )
+        return ret;
+
+    ret = passthrough_dtdev_add_resources(dom, np, "fsl,sc_always_on_rsrc_id",
+                                          clb_passthrough_add_always_on);
+    if ( ret < 0 )
+        return ret;
+
+    ret = passthrough_dtdev_add_resources(dom, np, "fsl,sc_rsrc_id",
+                                          clb_passthrough_assign_resource);
+    if ( ret < 0 )
+        return ret;
+
+    ret = passthrough_dtdev_add_resources(dom, np, "fsl,sc_pad_id",
+                                          clb_passthrough_assign_pad);
+    if ( ret < 0 )
+        return ret;
+
     return 0;
 }
 
@@ -859,6 +550,13 @@ int imx8qm_do_domctl(struct xen_domctl *domctl, struct domain *d,
 
             switch ( op->cmd )
             {
+            /*
+             * N.B. XEN_DOMCTL_PLATFORM_OP_PASSTHROUGH_DTDEV can be called
+             * multiple times for the same device tree node. This happens
+             * when the toolstack re-creates domain device tree due to
+             * its resize, e.g. when allocated device tree cannot hold
+             * all the nodes to be copied.
+             */
             case XEN_DOMCTL_PLATFORM_OP_PASSTHROUGH_DTDEV:
                 {
                     char *path;
@@ -872,7 +570,7 @@ int imx8qm_do_domctl(struct xen_domctl *domctl, struct domain *d,
                         break;
                     }
 
-                    ret = handle_passthrough_dtdev(domctl->domain, path);
+                    ret = handle_passthrough_dtdev(d, path);
                     xfree(path);
                     break;
                 }
