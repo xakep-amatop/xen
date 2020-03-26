@@ -89,6 +89,9 @@ struct arch_domain
 #ifdef CONFIG_TEE
     void *tee;
 #endif
+
+    /* Platform's private data */
+    void *plat_priv;
 }  __cacheline_aligned;
 
 struct arch_vcpu
