@@ -391,7 +391,7 @@ int platform_assign_dev(struct domain *d, u8 devfn, struct dt_device_node *dev,
                 if ( sci_err != SC_ERR_NONE )
                     printk(XENLOG_ERR
                            "Failed to set master SID 0x%x for resource %d, err: %d\n",
-                           resource_id[j], streamid, sci_err);
+                           streamid, resource_id[j], sci_err);
             }
 	}
         i++;
