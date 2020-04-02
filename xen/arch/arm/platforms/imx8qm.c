@@ -490,28 +490,24 @@ static int passthrough_dtdev_add_resources(struct imx8qm_domain *dom,
             ret = sc_err_to_posix(sci_err);
             break;
         }
+#ifdef IMX8QM_PLAT_DEBUG
+        printk(XENLOG_DEBUG
+               "Assign %d (%s %s) to domain id %d\n",
+               id, np->full_name, prop_name, dom->domain_id);
+#endif
     }
 
     return ret;
 }
 
-static int handle_passthrough_dtdev(struct domain *d, const char *path)
+static int handle_passthrough_dtdev(struct imx8qm_domain *dom, struct dt_device_node *np)
 {
-    struct dt_device_node *np;
-    struct imx8qm_domain *dom = (struct imx8qm_domain *)d->arch.plat_priv;
-    domid_t domid = d->domain_id;
+    struct dt_device_node *child;
     int ret;
 
-    np = dt_find_node_by_path(path);
-    if ( !np )
-    {
-        printk(XENLOG_ERR "Passthrough device %s not found for domid %d\n",
-               path, domid);
-        return -EINVAL;
-    }
-
 #ifdef IMX8QM_PLAT_DEBUG
-    printk(XENLOG_ERR "Passthrough device %s for domid %d\n", path, domid);
+    printk(XENLOG_DEBUG "Find resources from node %s for domid %d\n",
+           np->full_name, dom->domain_id);
 #endif
 
     ret = passthrough_dtdev_add_resources(dom, np, "fsl,sc_init_on_rsrc_id",
@@ -533,6 +529,13 @@ static int handle_passthrough_dtdev(struct domain *d, const char *path)
                                           clb_passthrough_assign_pad);
     if ( ret < 0 )
         return ret;
+
+    for ( child = np->child; child != NULL; child = child->sibling )
+    {
+        ret = handle_passthrough_dtdev(dom, child);
+        if ( ret )
+            return ret;
+    }
 
     return 0;
 }
@@ -560,6 +563,9 @@ int imx8qm_do_domctl(struct xen_domctl *domctl, struct domain *d,
             case XEN_DOMCTL_PLATFORM_OP_PASSTHROUGH_DTDEV:
                 {
                     char *path;
+                    struct dt_device_node *np;
+                    struct imx8qm_domain * dom = (struct imx8qm_domain *)d->arch.plat_priv;
+                    domid_t domid = d->domain_id;
 
                     path = safe_copy_string_from_guest(op->u.passthrough_dtdev.path,
                                                        op->u.passthrough_dtdev.size,
@@ -570,7 +576,21 @@ int imx8qm_do_domctl(struct xen_domctl *domctl, struct domain *d,
                         break;
                     }
 
-                    ret = handle_passthrough_dtdev(d, path);
+#ifdef IMX8QM_PLAT_DEBUG
+                    printk(XENLOG_DEBUG "Passthrough device %s for domid %d\n",
+                           path, domid);
+#endif
+
+                    np = dt_find_node_by_path(path);
+                    if ( !np )
+                    {
+                        printk(XENLOG_ERR "Passthrough device %s not found for domid %d\n",
+                               path, domid);
+                        ret = -EINVAL;
+                        break;
+                    }
+
+                    ret = handle_passthrough_dtdev(dom, np);
                     xfree(path);
                     break;
                 }
