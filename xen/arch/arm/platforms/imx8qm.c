@@ -50,6 +50,8 @@
  */
 #define SC_R_SID_LAST           32
 
+#define SC_R_NONE               0xFFF0
+
 static const char * const imx8qm_dt_compat[] __initconst =
 {
     "fsl,imx8qm",
@@ -289,6 +291,53 @@ int platform_deassign_dev(struct domain *d, struct dt_device_node *dev)
     return 0;
 }
 
+static u32 get_rsrc_from_pd(const struct dt_device_node *np)
+{
+    const __be32 *prop;
+    struct dt_device_node *pnode;
+    u32 resource_id;
+
+    prop = dt_get_property(np, "power-domains", NULL);
+    if ( !prop )
+    {
+#ifdef IMX8QM_PLAT_DEBUG
+        printk(XENLOG_DEBUG "Device %s has no power domains, can't get resource\n",
+               np->full_name);
+#endif
+        return SC_R_NONE;
+    }
+
+    pnode = dt_find_node_by_phandle(be32_to_cpup(prop));
+    if ( !pnode )
+    {
+#ifdef IMX8QM_PLAT_DEBUG
+        printk(XENLOG_DEBUG "Device %s has no power domain node\n",
+               np->full_name);
+#endif
+        return -EINVAL;
+    }
+
+    if ( !dt_property_read_u32(pnode, "reg", &resource_id) )
+    {
+#ifdef IMX8QM_PLAT_DEBUG
+        printk(XENLOG_DEBUG "Power domain node %s has no resource assigned\n",
+               np->full_name);
+#endif
+        return -EINVAL;
+    }
+
+    if ( resource_id == SC_R_NONE )
+    {
+#ifdef IMX8QM_PLAT_DEBUG
+        printk(XENLOG_DEBUG
+               "Skip assigning invalid resource SC_R_NONE to power domain node %s\n",
+               np->full_name);
+#endif
+    }
+
+    return resource_id;
+}
+
 int platform_assign_dev(struct domain *d, u8 devfn, struct dt_device_node *dev,
                         u32 flag)
 {
@@ -297,7 +346,7 @@ int platform_assign_dev(struct domain *d, u8 devfn, struct dt_device_node *dev,
     const __be32 *prop;
     u32 resource_id[SC_R_SID_LAST];
     u32 len;
-    int i;
+    int i, ret;
 
 
 #ifdef IMX8QM_PLAT_DEBUG
@@ -340,34 +389,10 @@ int platform_assign_dev(struct domain *d, u8 devfn, struct dt_device_node *dev,
     }
     else
     {
-        struct dt_device_node *pnode = NULL;
-
-        /* Get the handle to the power domain. */
-        prop = dt_get_property(dev, "power-domains", NULL);
-        if ( !prop )
-        {
-            printk(XENLOG_ERR "Device %s has no power domains, can't assign\n",
-                   dev->full_name);
+        ret = get_rsrc_from_pd(dev);
+        if ( ret < 0 || ret == SC_R_NONE )
             return -EINVAL;
-        }
-
-        /* Get the power domain's node. */
-        pnode = dt_find_node_by_phandle(be32_to_cpup(prop));
-        if ( !pnode )
-        {
-            printk(XENLOG_ERR "Device %s has no power domain node\n",
-                   dev->full_name);
-            return -EINVAL;
-        }
-
-        /* Now get the resource ID of this power domain. */
-        if ( !dt_property_read_u32(pnode, "reg", &resource_id[0]) )
-        {
-            printk(XENLOG_ERR "Device %s has no power domain node\n",
-                   dev->full_name);
-            return -EINVAL;
-	}
-
+        resource_id[0] = ret;
         /* Report single entry only. */
         len = 1;
     }
@@ -393,7 +418,7 @@ int platform_assign_dev(struct domain *d, u8 devfn, struct dt_device_node *dev,
                            "Failed to set master SID 0x%x for resource %d, err: %d\n",
                            streamid, resource_id[j], sci_err);
             }
-	}
+        }
         i++;
     }
     return 0;
@@ -500,6 +525,28 @@ static int passthrough_dtdev_add_resources(struct imx8qm_domain *dom,
     return ret;
 }
 
+static int passthrough_dtdev_add_resources_pd(struct imx8qm_domain *dom,
+                                              const struct dt_device_node *np)
+{
+    int ret;
+    u32 resource_id;
+
+    ret = get_rsrc_from_pd(np);
+    if ( ret == SC_R_NONE )
+        return 0;
+    if ( ret < 0 )
+        return ret;
+    resource_id = ret;
+    ret = clb_passthrough_assign_resource(dom, resource_id);
+
+#ifdef IMX8QM_PLAT_DEBUG
+    printk(XENLOG_DEBUG "Assign %d (%s) to domain id %d\n",
+           resource_id, np->full_name, dom->domain_id);
+#endif
+
+    return ret;
+}
+
 static int handle_passthrough_dtdev(struct imx8qm_domain *dom, struct dt_device_node *np)
 {
     struct dt_device_node *child;
@@ -522,6 +569,10 @@ static int handle_passthrough_dtdev(struct imx8qm_domain *dom, struct dt_device_
 
     ret = passthrough_dtdev_add_resources(dom, np, "fsl,sc_rsrc_id",
                                           clb_passthrough_assign_resource);
+    if ( ret < 0 )
+        return ret;
+
+    ret = passthrough_dtdev_add_resources_pd(dom, np);
     if ( ret < 0 )
         return ret;
 
