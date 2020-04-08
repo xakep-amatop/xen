@@ -56,6 +56,24 @@ static bool __init device_tree_node_compatible(const void *fdt, int node,
     return false;
 }
 
+static bool __init device_tree_node_available(const void *fdt, int node)
+{
+    int len;
+    const void *prop;
+
+    prop = fdt_getprop(fdt, node, "status", &len);
+    if ( prop == NULL )
+        return true;
+
+    if ( len > 0 )
+    {
+        if ( !dt_prop_cmp(prop, "okay") || !dt_prop_cmp(prop, "ok") )
+            return true;
+    }
+
+    return false;
+}
+
 void __init device_tree_get_reg(const __be32 **cell, u32 address_cells,
                                 u32 size_cells, u64 *start, u64 *size)
 {
@@ -74,6 +92,9 @@ static int __init device_tree_get_meminfo(const void *fdt, int node,
     u32 reg_cells = address_cells + size_cells;
     paddr_t start, size;
     struct meminfo *mem = data;
+
+    if ( !device_tree_node_available(fdt, node) )
+        return 0;
 
     if ( address_cells < 1 || size_cells < 1 )
     {
