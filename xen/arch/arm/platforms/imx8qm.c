@@ -626,6 +626,25 @@ int imx8qm_do_domctl(struct xen_domctl *domctl, struct domain *d,
                         ret = PTR_ERR(path);
                         break;
                     }
+                    /*
+                     * Some of the devices describe their resources via 'fsl,sc_rsrc_id' arrays,
+                     * but some of them rely on 'power-domains' property, which means those resource
+                     * IDs are taken from '/imx8qm-pm' node. So, ideally, only relevant nodes of the
+                     * '/imx8qm-pm' should be copied to the domain's device tree. But for simplicity,
+                     * guests copy the node as is with the resources they do not own.
+                     * Thus, parsing '/imx8qm-pm' here for resources results in some of the resources
+                     * are simultaneously assigned to multiple domains. To fix that, skip parsing this
+                     * node, but hold it in the device tree, so we can reference resources via
+                     * 'power-domains'.
+                     */
+                    if ( !strcmp(path, "/imx8qm-pm") )
+                    {
+                        printk(XENLOG_DEBUG "Skip device %s for domid %d\n",
+                               path,domid);
+                        xfree(path);
+                        ret = 0;
+                        break;
+                    }
 
 #ifdef IMX8QM_PLAT_DEBUG
                     printk(XENLOG_DEBUG "Passthrough device %s for domid %d\n",
