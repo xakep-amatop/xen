@@ -291,7 +291,8 @@ int platform_deassign_dev(struct domain *d, struct dt_device_node *dev)
     return 0;
 }
 
-static u32 get_rsrc_from_pd(const struct dt_device_node *np)
+static u32 get_rsrc_from_pd(const struct dt_device_node *np,
+                            struct dt_device_node **pd)
 {
     const __be32 *prop;
     struct dt_device_node *pnode;
@@ -314,8 +315,10 @@ static u32 get_rsrc_from_pd(const struct dt_device_node *np)
         printk(XENLOG_DEBUG "Device %s has no power domain node\n",
                np->full_name);
 #endif
+        *pd = NULL;
         return -EINVAL;
     }
+    *pd = pnode;
 
     if ( !dt_property_read_u32(pnode, "reg", &resource_id) )
     {
@@ -341,7 +344,7 @@ static u32 get_rsrc_from_pd(const struct dt_device_node *np)
 int platform_assign_dev(struct domain *d, u8 devfn, struct dt_device_node *dev,
                         u32 flag)
 {
-    struct dt_device_node *smmu_np;
+    struct dt_device_node *smmu_np, *pd;
     struct dt_phandle_args masterspec;
     const __be32 *prop;
     u32 resource_id[SC_R_SID_LAST];
@@ -389,7 +392,7 @@ int platform_assign_dev(struct domain *d, u8 devfn, struct dt_device_node *dev,
     }
     else
     {
-        ret = get_rsrc_from_pd(dev);
+        ret = get_rsrc_from_pd(dev, &pd);
         if ( ret < 0 || ret == SC_R_NONE )
             return -EINVAL;
         resource_id[0] = ret;
@@ -528,21 +531,26 @@ static int passthrough_dtdev_add_resources(struct imx8qm_domain *dom,
 static int passthrough_dtdev_add_resources_pd(struct imx8qm_domain *dom,
                                               const struct dt_device_node *np)
 {
-    int ret;
+    struct dt_device_node *rsrc_node, *pd = NULL;
+    int ret = 0;
     u32 resource_id;
 
-    ret = get_rsrc_from_pd(np);
-    if ( ret == SC_R_NONE )
-        return 0;
-    if ( ret < 0 )
-        return ret;
-    resource_id = ret;
-    ret = clb_passthrough_assign_resource(dom, resource_id);
-
+    rsrc_node = (struct dt_device_node *)np;
+    while ( rsrc_node )
+    {
+        ret = get_rsrc_from_pd(rsrc_node, &pd);
+        if ( ret == SC_R_NONE )
+            return 0;
+        if ( ret < 0 )
+            return ret;
+        resource_id = ret;
+        ret = clb_passthrough_assign_resource(dom, resource_id);
 #ifdef IMX8QM_PLAT_DEBUG
-    printk(XENLOG_DEBUG "Assign %d (%s) to domain id %d\n",
-           resource_id, np->full_name, dom->domain_id);
+        printk(XENLOG_DEBUG "Assign %d (%s) to domain id %d\n",
+               resource_id, np->full_name, dom->domain_id);
 #endif
+        rsrc_node = pd;
+    }
 
     return ret;
 }
