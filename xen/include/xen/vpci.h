@@ -261,6 +261,22 @@ static inline void vpci_cancel_pending_locked(struct pci_dev *pdev)
 }
 #endif
 
+#ifdef CONFIG_HAS_VPCI_GUEST_SUPPORT
+/* Notify vPCI that device is assigned/de-assigned to/from guest. */
+int vpci_assign_device(struct domain *d, struct pci_dev *pdev);
+int vpci_deassign_device(struct domain *d, struct pci_dev *pdev);
+#else
+static inline int vpci_assign_device(struct domain *d, struct pci_dev *pdev)
+{
+    return 0;
+};
+
+static inline int vpci_deassign_device(struct domain *d, struct pci_dev *pdev)
+{
+    return 0;
+};
+#endif
+
 #endif
 
 /*
