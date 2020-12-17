@@ -4,6 +4,8 @@
 
 #include <xen/stdbool.h>
 
+#include <xen/types.h>
+
 enum device_type
 {
 #ifdef CONFIG_HAS_DEVICE_TREE
@@ -32,6 +34,7 @@ struct device
 #ifdef CONFIG_HAS_PASSTHROUGH
     void *iommu; /* IOMMU private data */;
     struct iommu_fwspec *iommu_fwspec; /* per-device IOMMU instance data */
+    bool is_protected; /* Shows that device is protected by IOMMU */
 #endif
 };
 
@@ -61,6 +64,16 @@ int device_init(struct dt_device_node *dev, enum device_class class,
  * Return the device type on success or DEVICE_ANY on failure
  */
 enum device_class device_get_class(const struct dt_device_node *dev);
+
+static inline void device_set_protected(struct device *device)
+{
+    device->is_protected = true;
+}
+
+static inline bool device_is_protected(const struct device *device)
+{
+    return device->is_protected;
+}
 
 #define DT_DEVICE_START(dev_name, ident, cls)                   \
 static const struct device_desc __dev_desc_##dev_name __used    \

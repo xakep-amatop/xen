@@ -36,7 +36,7 @@ int iommu_assign_dt_device(struct domain *d, struct dt_device_node *dev)
     if ( !is_iommu_enabled(d) )
         return -EINVAL;
 
-    if ( !dt_device_is_protected(dev) )
+    if ( !device_is_protected(dt_to_dev(dev)) )
         return -EINVAL;
 
     spin_lock(&dtdevs_lock);
@@ -69,7 +69,7 @@ int iommu_deassign_dt_device(struct domain *d, struct dt_device_node *dev)
     if ( !is_iommu_enabled(d) )
         return -EINVAL;
 
-    if ( !dt_device_is_protected(dev) )
+    if ( !device_is_protected(dt_to_dev(dev)) )
         return -EINVAL;
 
     spin_lock(&dtdevs_lock);
@@ -93,7 +93,7 @@ static bool iommu_dt_device_is_assigned_locked(const struct dt_device_node *dev)
 
     ASSERT(spin_is_locked(&dtdevs_lock));
 
-    if ( !dt_device_is_protected(dev) )
+    if ( !device_is_protected(dt_to_dev(dev)) )
         return 0;
 
     assigned = !list_empty(&dev->domain_list);
@@ -198,11 +198,18 @@ int iommu_add_dt_device(struct dt_device_node *np)
         return -EINVAL;
 
     /*
+     * This is needed in case a device has both the iommus property and
+     * also apperars in the mmu-masters list.
+     */
+    if ( device_is_protected(dev) )
+        return 0;
+
+    /*
      * The device may already have been registered. As there is no harm in
      * it just return success early.
      */
     if ( dev_iommu_fwspec_get(dev) )
-        return 0;
+        return -EEXIST;
 
     spin_lock(&dtdevs_lock);
 
