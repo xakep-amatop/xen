@@ -50,6 +50,12 @@
  */
 #define SC_R_SID_LAST           32
 
+/*
+ * We expect not more than the below number of resources defined in a
+ * power-domain node's property.
+ */
+#define SC_R_POWER_DOMAIN_LAST  32
+
 #define SC_R_NONE               0xFFF0
 
 static const char * const imx8qm_dt_compat[] __initconst =
@@ -292,12 +298,15 @@ int platform_deassign_dev(struct domain *d, struct dt_device_node *dev)
 }
 
 static u32 get_rsrc_from_pd(const struct dt_device_node *np,
-                            struct dt_device_node **pd)
+                            struct dt_device_node **pd,
+                            u32 *resource_id,
+                            int res_len)
 {
     const __be32 *prop;
     struct dt_device_node *pnode;
-    u32 resource_id;
+    int ret;
 
+    *pd = NULL;
     prop = dt_get_property(np, "power-domains", NULL);
     if ( !prop )
     {
@@ -305,7 +314,7 @@ static u32 get_rsrc_from_pd(const struct dt_device_node *np,
         printk(XENLOG_DEBUG "Device %s has no power domains, can't get resource\n",
                np->full_name);
 #endif
-        return SC_R_NONE;
+        return 0;
     }
 
     pnode = dt_find_node_by_phandle(be32_to_cpup(prop));
@@ -315,30 +324,56 @@ static u32 get_rsrc_from_pd(const struct dt_device_node *np,
         printk(XENLOG_DEBUG "Device %s has no power domain node\n",
                np->full_name);
 #endif
-        *pd = NULL;
         return -EINVAL;
     }
     *pd = pnode;
 
-    if ( !dt_property_read_u32(pnode, "reg", &resource_id) )
+    if ( !dt_property_read_u32(pnode, "reg", resource_id) )
     {
+        struct dt_phandle_args masterspec;
+        int i = 0;
+
+        /*
+         * It can be that this is the device tree which doesn't store the
+         * resources in "reg" property, but has those in "power-domains".
+         */
+        ret = dt_parse_phandle_with_args(np, "power-domains",
+                                         "#power-domain-cells", i,
+                                         &masterspec);
+        if ( ret < 0 )
+        {
 #ifdef IMX8QM_PLAT_DEBUG
-        printk(XENLOG_DEBUG "Power domain node %s has no resource assigned\n",
-               np->full_name);
+            printk(XENLOG_DEBUG
+                   "Power domain node %s has no resource assigned\n",
+                   np->full_name);
 #endif
-        return -EINVAL;
+            return -EINVAL;
+        }
+        /* Have resources defined in power-domains, grab those. */
+        do {
+            resource_id[i++] = masterspec.args[0];
+
+            ret = dt_parse_phandle_with_args(np, "power-domains",
+                                             "#power-domain-cells", i,
+                                             &masterspec);
+        } while ( (ret >= 0) && (i < res_len) );
+        /* Report the number of the resources found. */
+        ret = i;
+    } else {
+        /* Report a single resource. */
+        ret = 1;
+        if ( resource_id[0] == SC_R_NONE )
+        {
+            ret = 0;
+#ifdef IMX8QM_PLAT_DEBUG
+            printk(XENLOG_DEBUG
+                   "Skip assigning invalid resource SC_R_NONE to power domain node %s\n",
+                   np->full_name);
+#endif
+        }
     }
 
-    if ( resource_id == SC_R_NONE )
-    {
-#ifdef IMX8QM_PLAT_DEBUG
-        printk(XENLOG_DEBUG
-               "Skip assigning invalid resource SC_R_NONE to power domain node %s\n",
-               np->full_name);
-#endif
-    }
-
-    return resource_id;
+    return ret;
 }
 
 int platform_assign_dev(struct domain *d, u8 devfn, struct dt_device_node *dev,
@@ -392,11 +427,10 @@ int platform_assign_dev(struct domain *d, u8 devfn, struct dt_device_node *dev,
     }
     else
     {
-        ret = get_rsrc_from_pd(dev, &pd);
-        if ( ret < 0 || ret == SC_R_NONE )
-            return -EINVAL;
-        resource_id[0] = ret;
         /* Report single entry only. */
+        ret = get_rsrc_from_pd(dev, &pd, resource_id, 1);
+        if ( ret < 0 )
+            return ret;
         len = 1;
     }
 
@@ -532,27 +566,38 @@ static int passthrough_dtdev_add_resources_pd(struct imx8qm_domain *dom,
                                               const struct dt_device_node *np)
 {
     struct dt_device_node *rsrc_node, *pd = NULL;
-    int ret = 0;
-    u32 resource_id;
+    u32 resource_id[SC_R_POWER_DOMAIN_LAST];
 
     rsrc_node = (struct dt_device_node *)np;
     while ( rsrc_node )
     {
-        ret = get_rsrc_from_pd(rsrc_node, &pd);
-        if ( ret == SC_R_NONE )
-            return 0;
-        if ( ret < 0 )
-            return ret;
-        resource_id = ret;
-        ret = clb_passthrough_assign_resource(dom, resource_id);
+        int i, cnt;
+
+        cnt = get_rsrc_from_pd(rsrc_node, &pd, resource_id,
+                               ARRAY_SIZE(resource_id));
+        if ( cnt < 0 )
+            return cnt;
+        for ( i = 0; i < cnt; i++ )
+        {
+            int ret;
+
+            ret = clb_passthrough_assign_resource(dom, resource_id[i]);
+            if ( ret < 0 )
+            {
+                ret = sc_err_to_posix(ret);
+                printk(XENLOG_DEBUG "Failed to assign %d (%s) to domain id %d\n",
+                       resource_id[i], np->full_name, dom->domain_id);
+                return ret;
+            }
 #ifdef IMX8QM_PLAT_DEBUG
-        printk(XENLOG_DEBUG "Assign %d (%s) to domain id %d\n",
-               resource_id, np->full_name, dom->domain_id);
+            printk(XENLOG_DEBUG "Assign %d (%s) to domain id %d\n",
+                   resource_id[i], np->full_name, dom->domain_id);
 #endif
+        }
         rsrc_node = pd;
     }
 
-    return ret;
+    return 0;
 }
 
 static int handle_passthrough_dtdev(struct imx8qm_domain *dom, struct dt_device_node *np)
