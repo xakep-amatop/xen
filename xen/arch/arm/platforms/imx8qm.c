@@ -575,6 +575,7 @@ static int passthrough_dtdev_add_resources_pd(struct imx8qm_domain *dom,
 
         cnt = get_rsrc_from_pd(rsrc_node, &pd, resource_id,
                                ARRAY_SIZE(resource_id));
+        ASSERT(cnt <= ARRAY_SIZE(resource_id));
         if ( cnt < 0 )
             return cnt;
         for ( i = 0; i < cnt; i++ )

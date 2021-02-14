@@ -876,8 +876,53 @@ static int check_partial_fdt(libxl__gc *gc, void *fdt, size_t size)
     return 0;
 }
 
+static uint64_t dt_next_cell_1(const __be32 **cellp)
+{
+    const __be32 *p = *cellp;
+
+    *cellp = p + 1;
+    return (uint64_t)fdt32_to_cpu(*p);
+}
+
+static void device_tree_get_reg_1_1(const __be32 **cell,
+                                    uint64_t *start, uint64_t *size)
+{
+    *start = dt_next_cell_1(cell);
+    *size = dt_next_cell_1(cell);
+}
+
+static int translate_reg_prop(libxl__gc *gc, void *fdt, void *pfdt,
+                              const struct fdt_property *prop,
+                              int nr_regs)
+{
+    const __be32 *cell = (const __be32 *)prop->data;
+    uint32_t regs[nr_regs * (GUEST_ROOT_ADDRESS_CELLS
+                             + GUEST_ROOT_SIZE_CELLS)];
+    be32 *cells = &regs[0];
+    int i;
+
+    if ( !nr_regs )
+            return fdt_property(fdt, "reg",
+                                prop->data, fdt32_to_cpu(prop->len));
+
+    for (i = 0; i < nr_regs; i++)
+    {
+        uint64_t base, size;
+
+        device_tree_get_reg_1_1(&cell, &base, &size);
+        if ( !size )
+        {
+            LOG(INFO, "Can't read \"reg\" property");
+            return -FDT_ERR_NOTFOUND;
+        }
+        set_range(&cells, GUEST_ROOT_ADDRESS_CELLS, GUEST_ROOT_SIZE_CELLS,
+                  base, size);
+    }
+    return fdt_property(fdt, "reg", regs, sizeof(regs));
+}
+
 static int copy_properties(libxl__gc *gc, void *fdt, void *pfdt,
-                           int nodeoff)
+                           int nodeoff, bool need_reg_translate)
 {
     int propoff, nameoff, r;
     const struct fdt_property *prop;
@@ -891,8 +936,35 @@ static int copy_properties(libxl__gc *gc, void *fdt, void *pfdt,
         }
 
         nameoff = fdt32_to_cpu(prop->nameoff);
-        r = fdt_property(fdt, fdt_string(pfdt, nameoff),
-                         prop->data, fdt32_to_cpu(prop->len));
+        if ( need_reg_translate && !strcmp(fdt_string(pfdt, nameoff), "reg") )
+        {
+            /*
+             * TODO: Guess here if we need to translate the node: we have
+             * nothing better then assume that we have 1 cell for the address
+             * and 1 for the size at the original location. If we have
+             * "{address|size}-cells" in the parent node then this node will
+             * define its "reg" property with that respect, e.g.:
+             * i2c@5a830000 {
+             *     reg = <0x5a830000 0x4000>;
+             *     #address-cells = <0x1>;
+             *     #size-cells = <0x0>;
+             *     ina226@40 {
+             *         reg = <0x40>;
+             * TODO: This won't work for reg = <0x40 0xXX> case.
+             * Proper solution does require {address|size}-cells parsed
+             * correctly.
+             */
+            if ( fdt32_to_cpu(prop->len) % ((1 + 1) * sizeof(uint32_t)) )
+                r = fdt_property(fdt, fdt_string(pfdt, nameoff),
+                                 prop->data, fdt32_to_cpu(prop->len));
+            else
+                r = translate_reg_prop(gc, fdt, pfdt, prop,
+                                       fdt32_to_cpu(prop->len) /
+                                       ((1 + 1) * sizeof(uint32_t)));
+        } else {
+            r = fdt_property(fdt, fdt_string(pfdt, nameoff),
+                             prop->data, fdt32_to_cpu(prop->len));
+        }
         if (r) return r;
     }
 
@@ -902,20 +974,20 @@ static int copy_properties(libxl__gc *gc, void *fdt, void *pfdt,
 
 /* Copy a node from the partial device tree to the guest device tree */
 static int copy_node(libxl__gc *gc, void *fdt, void *pfdt,
-                     int nodeoff, int depth)
+                     int nodeoff, int depth, bool need_reg_translate)
 {
     int r;
 
     r = fdt_begin_node(fdt, fdt_get_name(pfdt, nodeoff, NULL));
     if (r) return r;
 
-    r = copy_properties(gc, fdt, pfdt, nodeoff);
+    r = copy_properties(gc, fdt, pfdt, nodeoff, need_reg_translate);
     if (r) return r;
 
     for (nodeoff = fdt_first_subnode(pfdt, nodeoff);
          nodeoff >= 0;
          nodeoff = fdt_next_subnode(pfdt, nodeoff)) {
-        r = copy_node(gc, fdt, pfdt, nodeoff, depth + 1);
+        r = copy_node(gc, fdt, pfdt, nodeoff, depth + 1, need_reg_translate);
         if (r) return r;
     }
 
@@ -951,7 +1023,13 @@ static int copy_node_by_path(libxl__gc *gc, const char *path,
     if (strcmp(fdt_get_name(pfdt, nodeoff, NULL), name))
         return -FDT_ERR_NOTFOUND;
 
-    r = copy_node(gc, fdt, pfdt, nodeoff, 0);
+    /*
+     * Request "reg" property translation for nodes like
+     * /bus@59000000/asrc@59000000 as their {address|size}-cells are
+     * different at the device tree root where they are being copied to.
+     */
+    r = copy_node(gc, fdt, pfdt, nodeoff, 0,
+                  fdt_node_depth(pfdt, nodeoff) == 2);
     if (r) return r;
 
     return 0;
