@@ -5,3 +5,4 @@ obj-y += pci-host-common.o
 obj-y += ecam.o
 obj-y += pci-host-zynqmp.o
 obj-y += pci-host-rcar4.o
+obj-y += pci-emul-8139.o

@@ -24,6 +24,8 @@
 #include <asm/io.h>
 #include <asm/pci.h>
 
+#include "pci-emul-8139.h"
+
 #define RCAR4_DWC_VERSION       0x520A
 
 struct rcar4_priv
@@ -393,6 +395,9 @@ static int rcar4_child_config_read(struct pci_host_bridge *bridge,
     struct rcar4_priv *priv = bridge->priv;
     int ret;
 
+    if ( r8139_conf_read(sbdf, reg, len, value) )
+        return 0;
+
     /*
      * FIXME: we cannot read iATU settings at the early initialization
      * (probe) as the host's HW is not yet initialized at that phase.
@@ -422,6 +427,9 @@ static int rcar4_child_config_write(struct pci_host_bridge *bridge,
 {
     struct rcar4_priv *priv = bridge->priv;
     int ret;
+
+    if ( r8139_conf_write(sbdf, reg, len, value) )
+        return 0;
 
     ret = pci_generic_config_write(bridge, sbdf, reg, len, value);
     if ( !ret && (priv->num_viewport <= 2) )
@@ -511,6 +519,8 @@ static int __init pci_host_generic_probe(struct dt_device_node *dev,
            priv->num_viewport);
 
     priv->version = RCAR4_DWC_VERSION;
+
+    r8139_init(PCI_BDF(1, 0, 0));
 
     return 0;
 }
