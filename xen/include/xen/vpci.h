@@ -280,6 +280,7 @@ static inline void vpci_cancel_pending_locked(struct pci_dev *pdev)
 /* Notify vPCI that device is assigned/de-assigned to/from guest. */
 int vpci_assign_device(struct domain *d, struct pci_dev *pdev);
 int vpci_deassign_device(struct domain *d, struct pci_dev *pdev);
+bool vpci_translate_virtual_device(const struct domain *d, pci_sbdf_t *sbdf);
 #else
 static inline int vpci_assign_device(struct domain *d, struct pci_dev *pdev)
 {
