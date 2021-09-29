@@ -114,6 +114,9 @@ int vpci_add_handlers(struct pci_dev *pdev)
     spin_lock(&pdev->vpci_lock);
     pdev->vpci = vpci;
     INIT_LIST_HEAD(&pdev->vpci->handlers);
+#ifdef CONFIG_HAS_VPCI_GUEST_SUPPORT
+    pdev->vpci->guest_sbdf.sbdf = ~0;
+#endif
 
     header = &pdev->vpci->header;
     for ( i = 0; i < ARRAY_SIZE(header->bars); i++ )
@@ -145,6 +148,53 @@ int vpci_add_handlers(struct pci_dev *pdev)
 }
 
 #ifdef CONFIG_HAS_VPCI_GUEST_SUPPORT
+int vpci_add_virtual_device(struct pci_dev *pdev)
+{
+    struct domain *d = pdev->domain;
+    pci_sbdf_t sbdf = { 0 };
+    unsigned long new_dev_number;
+
+    /*
+     * Each PCI bus supports 32 devices/slots at max or up to 256 when
+     * there are multi-function ones which are not yet supported.
+     */
+    if ( pdev->info.is_extfn )
+    {
+        gdprintk(XENLOG_ERR, "%pp: only function 0 passthrough supported\n",
+                 &pdev->sbdf);
+        return -EOPNOTSUPP;
+    }
+
+    new_dev_number = find_first_zero_bit(&d->vpci_dev_assigned_map,
+                                         VPCI_MAX_VIRT_DEV);
+    if ( new_dev_number >= VPCI_MAX_VIRT_DEV )
+        return -ENOSPC;
+
+    __set_bit(new_dev_number, &d->vpci_dev_assigned_map);
+
+    /*
+     * Both segment and bus number are 0:
+     *  - we emulate a single host bridge for the guest, e.g. segment 0
+     *  - with bus 0 the virtual devices are seen as embedded
+     *    endpoints behind the root complex
+     *
+     * TODO: add support for multi-function devices.
+     */
+    sbdf.devfn = PCI_DEVFN(new_dev_number, 0);
+    pdev->vpci->guest_sbdf = sbdf;
+
+    return 0;
+
+}
+REGISTER_VPCI_INIT(vpci_add_virtual_device, VPCI_PRIORITY_MIDDLE);
+
+static void vpci_remove_virtual_device(struct domain *d,
+                                       const struct pci_dev *pdev)
+{
+    __clear_bit(pdev->vpci->guest_sbdf.dev, &d->vpci_dev_assigned_map);
+    pdev->vpci->guest_sbdf.sbdf = ~0;
+}
+
 /* Notify vPCI that device is assigned to guest. */
 int vpci_assign_device(struct domain *d, struct pci_dev *pdev)
 {
@@ -171,6 +221,7 @@ int vpci_deassign_device(struct domain *d, struct pci_dev *pdev)
         return 0;
 
     spin_lock(&pdev->vpci_lock);
+    vpci_remove_virtual_device(d, pdev);
     vpci_remove_device_handlers_locked(pdev);
     spin_unlock(&pdev->vpci_lock);
 
