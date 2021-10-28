@@ -131,7 +131,13 @@ static void modify_decoding(const struct pci_dev *pdev, uint16_t cmd,
 
 bool vpci_process_pending(struct vcpu *v)
 {
-    if ( v->vpci.mem )
+    struct pci_dev *pdev = v->vpci.pdev;
+
+    if ( !pdev )
+        return false;
+
+    spin_lock(&pdev->vpci_lock);
+    if ( !pdev->vpci_cancel_pending && v->vpci.mem )
     {
         struct map_data data = {
             .d = v->domain,
@@ -140,30 +146,51 @@ bool vpci_process_pending(struct vcpu *v)
         int rc = rangeset_consume_ranges(v->vpci.mem, map_range, &data);
 
         if ( rc == -ERESTART )
+        {
+            spin_unlock(&pdev->vpci_lock);
             return true;
+        }
 
-        spin_lock(&v->vpci.pdev->vpci_lock);
-        if ( v->vpci.pdev->vpci )
+        if ( pdev->vpci )
             /* Disable memory decoding unconditionally on failure. */
-            modify_decoding(v->vpci.pdev,
+            modify_decoding(pdev,
                             rc ? v->vpci.cmd & ~PCI_COMMAND_MEMORY : v->vpci.cmd,
                             !rc && v->vpci.rom_only);
-        spin_unlock(&v->vpci.pdev->vpci_lock);
 
-        rangeset_destroy(v->vpci.mem);
-        v->vpci.mem = NULL;
         if ( rc )
+        {
             /*
              * FIXME: in case of failure remove the device from the domain.
              * Note that there might still be leftover mappings. While this is
-             * safe for Dom0, for DomUs the domain will likely need to be
-             * killed in order to avoid leaking stale p2m mappings on
-             * failure.
+             * safe for Dom0, for DomUs the domain needs to be killed in order
+             * to avoid leaking stale p2m mappings on failure.
              */
-            vpci_remove_device(v->vpci.pdev);
+            if ( is_hardware_domain(v->domain) )
+                vpci_remove_device_locked(pdev);
+            else
+                domain_crash(v->domain);
+        }
     }
+    spin_unlock(&pdev->vpci_lock);
 
     return false;
+}
+
+void vpci_cancel_pending_locked(struct pci_dev *pdev)
+{
+    struct vcpu *v;
+
+    ASSERT(spin_is_locked(&pdev->vpci_lock));
+
+    /* Cancel any pending work now on all vCPUs. */
+    for_each_vcpu( pdev->domain, v )
+    {
+        if ( v->vpci.mem && (v->vpci.pdev == pdev) )
+        {
+            rangeset_destroy(v->vpci.mem);
+            v->vpci.mem = NULL;
+        }
+    }
 }
 
 static int __init apply_map(struct domain *d, const struct pci_dev *pdev,

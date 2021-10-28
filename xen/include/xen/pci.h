@@ -135,6 +135,11 @@ struct pci_dev {
 
     /* Data for vPCI. */
     spinlock_t vpci_lock;
+    /*
+     * Set if PCI device is being removed now and we need to cancel any
+     * pending map/unmap operations.
+     */
+    bool vpci_cancel_pending;
     struct vpci *vpci;
 };
 
