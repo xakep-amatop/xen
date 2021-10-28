@@ -54,7 +54,9 @@ void vpci_remove_device_locked(struct pci_dev *pdev)
 {
     ASSERT(spin_is_locked(&pdev->vpci_lock));
 
+    pdev->vpci_cancel_pending = true;
     vpci_remove_device_handlers_locked(pdev);
+    vpci_cancel_pending_locked(pdev);
     xfree(pdev->vpci->msix);
     xfree(pdev->vpci->msi);
     xfree(pdev->vpci);
