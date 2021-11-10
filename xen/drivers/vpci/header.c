@@ -453,8 +453,8 @@ static int modify_bars(const struct pci_dev *pdev, uint16_t cmd, bool rom_only)
 }
 
 /* TODO: Add proper emulation for all bits of the command register. */
-static void cmd_write(const struct pci_dev *pdev, unsigned int reg,
-                      uint32_t cmd, void *data)
+void vpci_cmd_write(const struct pci_dev *pdev, unsigned int reg,
+                    uint32_t cmd, void *data)
 {
     uint16_t current_cmd = pci_conf_read16(pdev->sbdf, reg);
 
@@ -502,8 +502,8 @@ static uint32_t cmd_read(const struct pci_dev *pdev, unsigned int reg,
     return pci_conf_read16(pdev->sbdf, reg);
 }
 
-static void bar_write(const struct pci_dev *pdev, unsigned int reg,
-                      uint32_t val, void *data)
+void vpci_bar_write(const struct pci_dev *pdev, unsigned int reg,
+                    uint32_t val, void *data)
 {
     struct vpci_bar *bar = data;
     bool hi = false;
@@ -546,8 +546,8 @@ static void bar_write(const struct pci_dev *pdev, unsigned int reg,
     pci_conf_write32(pdev->sbdf, reg, val);
 }
 
-static void guest_bar_write(const struct pci_dev *pdev, unsigned int reg,
-                            uint32_t val, void *data)
+void vpci_guest_bar_write(const struct pci_dev *pdev, unsigned int reg,
+                          uint32_t val, void *data)
 {
     struct vpci_bar *bar = data;
     bool hi = false;
@@ -589,8 +589,8 @@ static void guest_bar_write(const struct pci_dev *pdev, unsigned int reg,
     bar->guest_reg = guest_reg;
 }
 
-static uint32_t guest_bar_read(const struct pci_dev *pdev, unsigned int reg,
-                               void *data)
+uint32_t vpci_guest_bar_read(const struct pci_dev *pdev, unsigned int reg,
+                             void *data)
 {
     const struct vpci_bar *bar = data;
     bool hi = false;
@@ -684,6 +684,10 @@ static int init_bars(struct pci_dev *pdev)
 
     ASSERT(pcidevs_write_locked());
 
+    /* No need to init for virtual functions. */
+    if ( pdev->info.is_virtfn )
+        return 0;
+
     header = &pdev->vpci->header;
     bars = header->bars;
 
@@ -712,10 +716,10 @@ static int init_bars(struct pci_dev *pdev)
 
     /* Reset the command register for guests. */
     if ( !is_hwdom )
-        cmd_write(pdev, PCI_COMMAND, 0, header);
+        vpci_cmd_write(pdev, PCI_COMMAND, 0, header);
 
     /* Setup a handler for the command register. */
-    rc = vpci_add_register(pdev->vpci, cmd_read, cmd_write, PCI_COMMAND,
+    rc = vpci_add_register(pdev->vpci, cmd_read, vpci_cmd_write, PCI_COMMAND,
                            2, header);
     if ( rc )
         return rc;
@@ -737,8 +741,8 @@ static int init_bars(struct pci_dev *pdev)
         {
             bars[i].type = VPCI_BAR_MEM64_HI;
             rc = vpci_add_register(pdev->vpci,
-                                   is_hwdom ? vpci_hw_read32 : guest_bar_read,
-                                   is_hwdom ? bar_write : guest_bar_write,
+                                   is_hwdom ? vpci_hw_read32 : vpci_guest_bar_read,
+                                   is_hwdom ? vpci_bar_write : vpci_guest_bar_write,
                                    reg, 4, &bars[i]);
             if ( rc )
                 goto fail;
@@ -801,8 +805,8 @@ static int init_bars(struct pci_dev *pdev)
         bars[i].prefetchable = val & PCI_BASE_ADDRESS_MEM_PREFETCH;
 
         rc = vpci_add_register(pdev->vpci,
-                               is_hwdom ? vpci_hw_read32 : guest_bar_read,
-                               is_hwdom ? bar_write : guest_bar_write,
+                               is_hwdom ? vpci_hw_read32 : vpci_guest_bar_read,
+                               is_hwdom ? vpci_bar_write : vpci_guest_bar_write,
                                reg, 4, &bars[i]);
         if ( rc )
             goto fail;
