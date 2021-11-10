@@ -519,8 +519,9 @@ static int modify_bars(const struct pci_dev *pdev, uint16_t cmd, bool rom_only)
     return 0;
 }
 
-static void cf_check cmd_write(
-    const struct pci_dev *pdev, unsigned int reg, uint32_t cmd, void *data)
+/* TODO: Add proper emulation for all bits of the command register. */
+void vpci_cmd_write(const struct pci_dev *pdev, unsigned int reg,
+                    uint32_t cmd, void *data)
 {
     struct vpci_header *header = data;
 
@@ -560,8 +561,8 @@ static uint32_t cf_check guest_cmd_read(
     return header->guest_cmd;
 }
 
-static void cf_check bar_write(
-    const struct pci_dev *pdev, unsigned int reg, uint32_t val, void *data)
+void vpci_bar_write(const struct pci_dev *pdev, unsigned int reg,
+                    uint32_t val, void *data)
 {
     struct vpci_bar *bar = data;
     bool hi = false;
@@ -612,9 +613,8 @@ static void cf_check bar_write(
     pci_conf_write32(pdev->sbdf, reg, val);
 }
 
-static void cf_check guest_mem_bar_write(const struct pci_dev *pdev,
-                                         unsigned int reg, uint32_t val,
-                                         void *data)
+void vpci_guest_bar_write(const struct pci_dev *pdev, unsigned int reg,
+                          uint32_t val, void *data)
 {
     struct vpci_bar *bar = data;
     bool hi = false;
@@ -654,8 +654,8 @@ static void cf_check guest_mem_bar_write(const struct pci_dev *pdev,
     bar->guest_addr = guest_addr;
 }
 
-static uint32_t cf_check guest_mem_bar_read(const struct pci_dev *pdev,
-                                            unsigned int reg, void *data)
+uint32_t vpci_guest_bar_read(const struct pci_dev *pdev, unsigned int reg,
+                             void *data)
 {
     const struct vpci_bar *bar = data;
     uint32_t reg_val;
@@ -683,7 +683,7 @@ static void cf_check rom_write(
     bool new_enabled = val & PCI_ROM_ADDRESS_ENABLE;
 
     /*
-     * See comment in bar_write(). Additionally since the ROM BAR has an enable
+     * See comment in vpci_bar_write(). Additionally since the ROM BAR has an enable
      * bit some writes are allowed while the BAR is mapped, as long as the
      * write is to unmap the ROM BAR.
      */
@@ -758,6 +758,10 @@ static int cf_check init_header(struct pci_dev *pdev)
 
     ASSERT(rw_is_write_locked(&pdev->domain->pci_lock));
 
+    /* No need to init for virtual functions. */
+    if ( pdev->info.is_virtfn )
+        return 0;
+
     switch ( pci_conf_read8(pdev->sbdf, PCI_HEADER_TYPE) & 0x7f )
     {
     case PCI_HEADER_TYPE_NORMAL:
@@ -782,7 +786,7 @@ static int cf_check init_header(struct pci_dev *pdev)
      */
     rc = vpci_add_register_mask(pdev->vpci,
                                 is_hwdom ? vpci_hw_read16 : guest_cmd_read,
-                                cmd_write, PCI_COMMAND, 2, header, 0, 0,
+                                vpci_cmd_write, PCI_COMMAND, 2, header, 0, 0,
                                 is_hwdom ? 0
                                          : PCI_COMMAND_RSVDP_MASK |
                                            PCI_COMMAND_IO |
@@ -898,9 +902,8 @@ static int cf_check init_header(struct pci_dev *pdev)
         {
             bars[i].type = VPCI_BAR_MEM64_HI;
             rc = vpci_add_register(pdev->vpci,
-                                   is_hwdom ? vpci_hw_read32
-                                            : guest_mem_bar_read,
-                                   is_hwdom ? bar_write : guest_mem_bar_write,
+                                   is_hwdom ? vpci_hw_read32 : vpci_guest_bar_read,
+                                   is_hwdom ? vpci_bar_write : vpci_guest_bar_write,
                                    reg, 4, &bars[i]);
             if ( rc )
                 goto fail;
@@ -958,8 +961,8 @@ static int cf_check init_header(struct pci_dev *pdev)
         bars[i].prefetchable = val & PCI_BASE_ADDRESS_MEM_PREFETCH;
 
         rc = vpci_add_register(pdev->vpci,
-                               is_hwdom ? vpci_hw_read32 : guest_mem_bar_read,
-                               is_hwdom ? bar_write : guest_mem_bar_write,
+                               is_hwdom ? vpci_hw_read32 : vpci_guest_bar_read,
+                               is_hwdom ? vpci_bar_write : vpci_guest_bar_write,
                                reg, 4, &bars[i]);
         if ( rc )
             goto fail;
