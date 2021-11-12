@@ -778,9 +778,6 @@ int arch_domain_create(struct domain *d,
     if ( is_hardware_domain(d) && (rc = domain_vuart_init(d)) )
         goto fail;
 
-    if ( (rc = domain_vpci_init(d)) != 0 )
-        goto fail;
-
 #ifdef CONFIG_ARM64_SVE
     /* Copy the encoded vector length sve_vl from the domain configuration */
     d->arch.sve_vl = config->arch.sve_vl;
@@ -872,6 +869,7 @@ int arch_domain_soft_reset(struct domain *d)
 
 void arch_domain_creation_finished(struct domain *d)
 {
+    ASSERT(!domain_vpci_init(d));
     p2m_domain_creation_finished(d);
 }
 
