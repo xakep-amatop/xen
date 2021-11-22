@@ -52,11 +52,16 @@ static void vpci_remove_device_handlers_locked(struct pci_dev *pdev)
 
 void vpci_remove_device_locked(struct pci_dev *pdev)
 {
+    struct vpci_header *header = &pdev->vpci->header;
+    unsigned int i;
+
     ASSERT(spin_is_locked(&pdev->vpci_lock));
 
     pdev->vpci_cancel_pending = true;
     vpci_remove_device_handlers_locked(pdev);
     vpci_cancel_pending_locked(pdev);
+    for ( i = 0; i < ARRAY_SIZE(header->bars); i++ )
+        rangeset_destroy(header->bars[i].mem);
     xfree(pdev->vpci->msix);
     xfree(pdev->vpci->msi);
     xfree(pdev->vpci);
@@ -92,6 +97,8 @@ static int run_vpci_init(struct pci_dev *pdev)
 int vpci_add_handlers(struct pci_dev *pdev)
 {
     struct vpci *vpci;
+    struct vpci_header *header;
+    unsigned int i;
     int rc;
 
     if ( !has_vpci(pdev->domain) )
@@ -108,11 +115,32 @@ int vpci_add_handlers(struct pci_dev *pdev)
     pdev->vpci = vpci;
     INIT_LIST_HEAD(&pdev->vpci->handlers);
 
+    header = &pdev->vpci->header;
+    for ( i = 0; i < ARRAY_SIZE(header->bars); i++ )
+    {
+        struct vpci_bar *bar = &header->bars[i];
+        char str[32];
+
+        snprintf(str, sizeof(str), "%pp:BAR%d", &pdev->sbdf, i);
+        bar->mem = rangeset_new(pdev->domain, str, RANGESETF_no_print);
+        if ( !bar->mem )
+        {
+            rc = -ENOMEM;
+            goto fail;
+        }
+    }
+
     rc = run_vpci_init(pdev);
     if ( rc )
-        vpci_remove_device_locked(pdev);
+        goto fail;
+
     spin_unlock(&pdev->vpci_lock);
 
+    return 0;
+
+ fail:
+    vpci_remove_device_locked(pdev);
+    spin_unlock(&pdev->vpci_lock);
     return rc;
 }
 
