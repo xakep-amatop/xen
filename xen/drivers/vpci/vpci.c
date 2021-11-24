@@ -387,6 +387,29 @@ uint32_t vpci_read(pci_sbdf_t sbdf, unsigned int reg, unsigned int size)
     if ( !pdev->vpci )
     {
         spin_unlock(&pdev->vpci_lock);
+        /*
+         * TODO: for unprivileged guests vpci_{read|write} need to be re-worked
+         * to not passthrough accesses to the registers not explicitly handled
+         * by the corresponding vPCI handlers: without fixing that passthrough
+         * to guests is completely unsafe as Xen allows them full access to
+         * the registers.
+         *
+         * Xen needs to be sure that every register a guest accesses is not
+         * going to cause the system to malfunction, so Xen needs to keep a
+         * list of the registers it is safe for a guest to access.
+         *
+         * For example, we should only expose the PCI capabilities that we know
+         * are safe for a guest to use, i.e.: MSI and MSI-X initially.
+         * The rest of the capabilities should be blocked from guest access,
+         * unless we audit them and declare safe for a guest to access.
+         *
+         * As a reference we might want to look at the approach currently used
+         * by QEMU in order to do PCI passthrough. A very limited set of PCI
+         * capabilities known to be safe for untrusted access are exposed to the
+         * guest and registers need to be explicitly handled or else access is
+         * rejected. Xen needs a fairly similar model in vPCI or else none of
+         * this will be safe for unprivileged access.
+         */
         return vpci_read_hw(sbdf, reg, size);
     }
 
