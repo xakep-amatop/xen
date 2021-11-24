@@ -126,7 +126,8 @@ unsigned int domain_vpci_get_num_mmio_handlers(struct domain *d)
         return ret < 0 ? 0 : ret;
     }
 
-    return 0;
+    /* For a single emulated host bridge's configuration space. */
+    return 1;
 }
 
 /*
