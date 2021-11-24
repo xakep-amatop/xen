@@ -134,6 +134,8 @@ static int vpci_get_num_handlers_cb(struct domain *d,
 
 unsigned int domain_vpci_get_num_mmio_handlers(struct domain *d)
 {
+    unsigned int count;
+
     if ( !has_vpci(d) )
         return 0;
 
@@ -145,7 +147,18 @@ unsigned int domain_vpci_get_num_mmio_handlers(struct domain *d)
     }
 
     /* For a single emulated host bridge's configuration space. */
-    return 1;
+    count = 1;
+
+#ifdef CONFIG_HAS_PCI_MSI
+    /*
+     * There's a single MSI-X MMIO handler that deals with both PBA
+     * and MSI-X tables per each PCI device being passed through.
+     * Maximum number of emulated virtual devices is VPCI_MAX_VIRT_DEV.
+     */
+    count += VPCI_MAX_VIRT_DEV;
+#endif
+
+    return count;
 }
 
 /*
