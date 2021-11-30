@@ -769,38 +769,82 @@ bool libxl__is_igd_vga_passthru(libxl__gc *gc,
 /* Scan through /sys/.../pciback/slots looking for pci's BDF */
 static int pciback_dev_has_slot(libxl__gc *gc, libxl_device_pci *pci)
 {
-    FILE *f;
-    int rc = 0;
-    unsigned dom, bus, dev, func;
+    struct vchan_info *vchan;
+    libxl__json_object *result = NULL, *args = NULL;
+    const libxl__json_object *dir;
+    const char *dir_name;
+    int i;
 
-    f = fopen(SYSFS_PCIBACK_DRIVER"/slots", "r");
+    vchan = pci_prepare_vchan(gc);
+    if (!vchan)
+        return -1;
 
-    if (f == NULL) {
+    libxl__vchan_param_add_string(gc, &args, PCID_CMD_DIR_ID, PCID_PCIBACK_DRIVER);
+    libxl__vchan_param_add_string(gc, &args, PCID_CMD_PCI_INFO, "/slots");
+    result = vchan_send_command(gc, vchan, PCID_CMD_READ_FILE, args);
+    if (!result)
+    {
         LOGE(ERROR, "Couldn't open %s", SYSFS_PCIBACK_DRIVER"/slots");
-        return ERROR_FAIL;
+        return -1;
     }
 
-    while (fscanf(f, "%x:%x:%x.%d\n", &dom, &bus, &dev, &func) == 4) {
-        if (dom == pci->domain
-            && bus == pci->bus
-            && dev == pci->dev
-            && func == pci->func) {
-            rc = 1;
-            goto out;
-        }
+    for (i = 0; (dir = libxl__json_array_get(result, i)); i++) {
+        dir_name = libxl__json_object_get_string(dir);
+        unsigned dom, bus, dev, func;
+
+        if (sscanf(dir_name, PCI_BDF, &dom, &bus, &dev, &func) != 4)
+            continue;
+        if (pci->domain == dom && pci->bus == bus &&
+            pci->dev == dev && pci->func == func)
+            return 1;
     }
-out:
-    fclose(f);
-    return rc;
+
+    return 0;
+}
+
+static int pcid_lstat(libxl__gc *gc, const char *sysfs_path,
+                       const libxl_device_pci *pci)
+{
+    libxl__json_object *args = NULL;
+    const libxl__json_object *lstat_obj;
+    struct vchan_info *vchan;
+    char *path = NULL;
+
+    vchan = pci_prepare_vchan(gc);
+    if (!vchan)
+        return ERROR_FAIL;
+
+    if (pci)
+        path = GCSPRINTF("/" PCI_BDF, pci->domain, pci->bus,
+                         pci->dev, pci->func);
+
+    if (strcmp(SYSFS_PCI_DEV, sysfs_path) == 0)
+        libxl__vchan_param_add_string(gc, &args, PCID_CMD_DIR_ID, PCID_PCI_DEV);
+    else if (strcmp(SYSFS_PCIBACK_DRIVER, sysfs_path) == 0)
+        libxl__vchan_param_add_string(gc, &args, PCID_CMD_DIR_ID, PCID_PCIBACK_DRIVER);
+    else if (strcmp(SYSFS_DRIVER_PATH, sysfs_path) == 0)
+        libxl__vchan_param_add_string(gc, &args, PCID_CMD_DIR_ID, PCID_PCI_DEV);
+
+    if (path)
+        libxl__vchan_param_add_string(gc, &args, PCID_CMD_PCI_INFO, path);
+    else
+        libxl__vchan_param_add_string(gc, &args, PCID_CMD_PCI_INFO, "");
+    lstat_obj = vchan_send_command(gc, vchan, PCID_CMD_EXISTS, args);
+    if (!lstat_obj)
+    {
+        errno = ENOENT;
+        return -1;
+    }
+
+    return 0;
 }
 
 static int pciback_dev_is_assigned(libxl__gc *gc, libxl_device_pci *pci)
 {
     char * spath;
     int rc;
-    struct stat st;
 
-    if ( access(SYSFS_PCIBACK_DRIVER, F_OK) < 0 ) {
+    if ( pcid_lstat(gc, SYSFS_PCIBACK_DRIVER, NULL) ) {
         if ( errno == ENOENT ) {
             LOG(ERROR, "Looks like pciback driver is not loaded");
         } else {
@@ -812,7 +856,7 @@ static int pciback_dev_is_assigned(libxl__gc *gc, libxl_device_pci *pci)
     spath = GCSPRINTF(SYSFS_PCIBACK_DRIVER"/"PCI_BDF,
                       pci->domain, pci->bus,
                       pci->dev, pci->func);
-    rc = lstat(spath, &st);
+    rc = pcid_lstat(gc, SYSFS_PCIBACK_DRIVER, pci);
 
     if( rc == 0 )
         return 1;
@@ -869,10 +913,9 @@ static int libxl__device_pci_assignable_add(libxl__gc *gc,
 {
     libxl_ctx *ctx = libxl__gc_owner(gc);
     unsigned dom, bus, dev, func;
-    char *spath, *driver_path = NULL;
+    char *driver_path = NULL;
     const char *name;
     int rc;
-    struct stat st;
 
     /* Local copy for convenience */
     dom = pci->domain;
@@ -899,8 +942,10 @@ static int libxl__device_pci_assignable_add(libxl__gc *gc,
     }
 
     /* See if the device exists */
-    spath = GCSPRINTF(SYSFS_PCI_DEV"/"PCI_BDF, dom, bus, dev, func);
-    if ( lstat(spath, &st) ) {
+
+    if ( pcid_lstat(gc, SYSFS_PCI_DEV, pci) ) {
+        const char *spath = GCSPRINTF(SYSFS_PCI_DEV"/"PCI_BDF,
+                                      dom, bus, dev, func);
         LOGE(ERROR, "Couldn't lstat %s", spath);
         return ERROR_FAIL;
     }
