@@ -1148,6 +1148,8 @@ static void ipmmu_free_root_domain(struct ipmmu_vmsa_domain *domain)
     xfree(domain);
 }
 
+static int ipmmu_deassign_device(struct domain *d, u8 devfn, struct device *dev);
+
 static int ipmmu_assign_device(struct domain *d, u8 devfn, struct device *dev,
                                uint32_t flag)
 {
@@ -1165,6 +1167,7 @@ static int ipmmu_assign_device(struct domain *d, u8 devfn, struct device *dev,
     if ( dev_is_pci(dev) )
     {
         struct pci_dev *pdev = dev_to_pci(dev);
+        struct domain *old_d = pdev->domain;
 
         printk(XENLOG_INFO "Assigning device %04x:%02x:%02x.%u to dom%d\n",
                pdev->seg, pdev->bus, PCI_SLOT(devfn), PCI_FUNC(devfn),
@@ -1182,7 +1185,17 @@ static int ipmmu_assign_device(struct domain *d, u8 devfn, struct device *dev,
 
         /* dom_io is used as a sentinel for quarantined devices */
         if ( d == dom_io )
-            return 0;
+        {
+            int ret;
+
+            /*
+             * Try to de-assign: do not return error if it was already
+             * de-assigned.
+             */
+            ret = ipmmu_deassign_device(old_d, devfn, dev);
+
+            return ret == -ESRCH ? 0 : ret;
+        }
     }
 #endif
 
@@ -1388,6 +1401,22 @@ static int ipmmu_add_device(u8 devfn, struct device *dev)
 
     /* Let Xen know that the master device is protected by an IOMMU. */
     device_set_protected(dev);
+
+#ifdef CONFIG_HAS_PCI
+    if ( dev_is_pci(dev) )
+    {
+        struct pci_dev *pdev = dev_to_pci(dev);
+        int ret;
+
+        /* TODO: this check needs to be removed once PCI OSIDs are in place. */
+        if ( pdev->sbdf.sbdf != PCI_BDF(0, 0, 0) )
+        {
+            ret = ipmmu_assign_device(pdev->domain, devfn, dev, 0);
+            if (ret)
+                return ret;
+        }
+    }
+#endif
 
     dev_info(dev, "Added master device (IPMMU %s micro-TLBs %u)\n",
              dev_name(fwspec->iommu_dev), fwspec->num_ids);
