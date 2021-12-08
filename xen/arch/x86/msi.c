@@ -29,7 +29,7 @@
 #include <asm/irq-vectors.h>
 #include <asm/smp.h>
 #include <asm/desc.h>
-#include <asm/msi.h>
+#include <xen/msi.h>
 #include <asm/fixmap.h>
 #include <asm/p2m.h>
 
