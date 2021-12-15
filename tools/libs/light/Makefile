@@ -70,6 +70,7 @@ OBJS-y += libxl.o
 OBJS-y += libxl_create.o
 OBJS-y += libxl_dm.o
 OBJS-y += libxl_pci.o
+OBJS-y += libxl_pcid.c
 OBJS-y += libxl_vchan.c
 OBJS-y += libxl_dom.o
 OBJS-y += libxl_exec.o
