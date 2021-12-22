@@ -39,6 +39,9 @@ struct kernel_info {
     /* GIC phandle */
     uint32_t phandle_gic;
 
+    /* dummy iommu phandle */
+    uint32_t phandle_iommu;
+
     /* loader to use for this kernel */
     void (*load)(struct kernel_info *info);
     /* loader specific state */

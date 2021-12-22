@@ -813,6 +813,12 @@ static int __init write_properties(struct domain *d, struct kernel_info *kinfo,
         }
     }
 
+    if ( iommu_node && kinfo->phandle_iommu && dt_device_is_protected(node) )
+    {
+        res = fdt_property_cell(kinfo->fdt, "iommus", kinfo->phandle_iommu);
+        if ( res )
+            return res;
+    }
     return 0;
 }
 
@@ -1443,6 +1449,38 @@ static int __init make_cpus_node(const struct domain *d, void *fdt)
     }
 
     res = fdt_end_node(fdt);
+
+    return res;
+}
+
+static int __init make_iommu_node(const struct domain *d,
+                                  const struct kernel_info *kinfo)
+{
+    const char compat[] = "xen,iommu-el2-v1";
+    int res;
+
+    if ( !kinfo->phandle_iommu )
+        return 0;
+
+    dt_dprintk("Create iommu node\n");
+
+    res = fdt_begin_node(kinfo->fdt, "xen-iommu");
+    if ( res )
+        return res;
+
+    res = fdt_property(kinfo->fdt, "compatible", compat, sizeof(compat));
+    if ( res )
+        return res;
+
+    res = fdt_property_cell(kinfo->fdt, "#iommu-cells", 0);
+    if ( res )
+        return res;
+
+    res = fdt_property_cell(kinfo->fdt, "phandle", kinfo->phandle_iommu);
+
+    res = fdt_end_node(kinfo->fdt);
+    if ( res )
+        return res;
 
     return res;
 }
@@ -2082,6 +2120,10 @@ static int __init handle_node(struct domain *d, struct kernel_info *kinfo,
         if ( res )
             return res;
 
+        res = make_iommu_node(d, kinfo);
+        if ( res )
+            return res;
+
         res = make_memory_node(d, kinfo->fdt, addrcells, sizecells, &kinfo->mem);
         if ( res )
             return res;
@@ -2675,6 +2717,8 @@ static int __init prepare_dtb_hwdom(struct domain *d, struct kernel_info *kinfo)
     ASSERT(dt_host && (dt_host->sibling == NULL));
 
     kinfo->phandle_gic = dt_interrupt_controller->phandle;
+    if ( is_iommu_enabled(d) )
+        kinfo->phandle_iommu = GUEST_PHANDLE_IOMMU;
     fdt = device_tree_flattened;
 
     new_size = fdt_totalsize(fdt) + DOM0_FDT_EXTRA_SIZE;
