@@ -169,7 +169,8 @@ static struct vpci_msix_entry *get_entry(struct vpci_msix *msix,
 {
     paddr_t start;
 
-    if ( is_hardware_domain(current->domain) )
+    if ( pci_is_hardware_domain(current->domain, msix->pdev->seg,
+                                msix->pdev->bus) )
         start = vmsix_table_addr(msix->pdev->vpci, VPCI_MSIX_TABLE);
     else
         start = vmsix_guest_table_addr(msix->pdev->vpci, VPCI_MSIX_TABLE);
@@ -284,7 +285,7 @@ int msix_write(const struct domain *d, struct vpci_msix *msix,
     if ( VMSIX_ADDR_IN_RANGE(addr, msix->pdev->vpci, VPCI_MSIX_PBA) )
     {
         /* Ignore writes to PBA for DomUs, it's behavior is undefined. */
-        if ( is_hardware_domain(d) )
+        if ( pci_is_hardware_domain(d, msix->pdev->seg, msix->pdev->bus) )
         {
             switch ( len )
             {
