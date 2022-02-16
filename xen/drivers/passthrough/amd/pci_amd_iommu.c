@@ -163,7 +163,7 @@ static int __must_check amd_iommu_setup_domain_device(
     else
         spin_unlock_irqrestore(&iommu->lock, flags);
 
-    ASSERT(pcidevs_locked());
+    ASSERT(pcidevs_write_locked());
 
     if ( pci_ats_device(iommu->seg, bus, pdev->devfn) &&
          !ivrs_dev->block_ats &&
@@ -307,7 +307,7 @@ static void amd_iommu_disable_domain_device(const struct domain *domain,
     if ( QUARANTINE_SKIP(domain) )
         return;
 
-    ASSERT(pcidevs_locked());
+    ASSERT(pcidevs_write_locked());
 
     if ( pci_ats_device(iommu->seg, bus, pdev->devfn) &&
          pci_ats_enabled(iommu->seg, bus, pdev->devfn) )

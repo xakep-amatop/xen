@@ -51,20 +51,65 @@ struct pci_seg {
 };
 
 static spinlock_t _pcidevs_lock = SPIN_LOCK_UNLOCKED;
+static DEFINE_RWLOCK(_pcidevs_rwlock);
+static DEFINE_PER_CPU(unsigned int, pcidevs_rwlock_cnt);
 
 void pcidevs_lock(void)
 {
+    pcidevs_read_lock();
     spin_lock_recursive(&_pcidevs_lock);
 }
 
 void pcidevs_unlock(void)
 {
     spin_unlock_recursive(&_pcidevs_lock);
+    pcidevs_read_unlock();
 }
 
-bool_t pcidevs_locked(void)
+bool pcidevs_locked(void)
 {
-    return !!spin_is_locked(&_pcidevs_lock);
+    return !!spin_is_locked(&_pcidevs_lock) || pcidevs_write_locked();
+}
+
+void pcidevs_read_lock(void)
+{
+    if ( get_cpu_var(pcidevs_rwlock_cnt) == 0 )
+        read_lock(&_pcidevs_rwlock);
+    get_cpu_var(pcidevs_rwlock_cnt)++;
+}
+
+int pcidevs_read_trylock(void)
+{
+    return read_trylock(&_pcidevs_rwlock);
+}
+
+void pcidevs_read_unlock(void)
+{
+    ASSERT(get_cpu_var(pcidevs_rwlock_cnt));
+
+    if ( get_cpu_var(pcidevs_rwlock_cnt) == 1 )
+        read_unlock(&_pcidevs_rwlock);
+    get_cpu_var(pcidevs_rwlock_cnt)--;
+}
+
+bool pcidevs_read_locked(void)
+{
+    return !!rw_is_locked(&_pcidevs_rwlock);
+}
+
+void pcidevs_write_lock(void)
+{
+    write_lock(&_pcidevs_rwlock);
+}
+
+void pcidevs_write_unlock(void)
+{
+    write_unlock(&_pcidevs_rwlock);
+}
+
+bool pcidevs_write_locked(void)
+{
+    return !!rw_is_write_locked(&_pcidevs_rwlock);
 }
 
 static struct radix_tree_root pci_segments;
@@ -758,7 +803,7 @@ int pci_add_device(u16 seg, u8 bus, u8 devfn,
 
     ret = -ENOMEM;
 
-    pcidevs_lock();
+    pcidevs_write_lock();
     pseg = alloc_pseg(seg);
     if ( !pseg )
         goto out;
@@ -854,7 +899,7 @@ int pci_add_device(u16 seg, u8 bus, u8 devfn,
     pci_enable_acs(pdev);
 
 out:
-    pcidevs_unlock();
+    pcidevs_write_unlock();
     if ( !ret )
     {
         printk(XENLOG_DEBUG "PCI add %s %pp\n", pdev_type,  &pdev->sbdf);
@@ -885,7 +930,7 @@ int pci_remove_device(u16 seg, u8 bus, u8 devfn)
     if ( !pseg )
         return -ENODEV;
 
-    pcidevs_lock();
+    pcidevs_write_lock();
     list_for_each_entry ( pdev, &pseg->alldevs_list, alldevs_list )
         if ( pdev->bus == bus && pdev->devfn == devfn )
         {
@@ -899,7 +944,7 @@ int pci_remove_device(u16 seg, u8 bus, u8 devfn)
             break;
         }
 
-    pcidevs_unlock();
+    pcidevs_write_unlock();
     return ret;
 }
 
@@ -915,7 +960,7 @@ static int deassign_device(struct domain *d, uint16_t seg, uint8_t bus,
     if ( !is_iommu_enabled(d) )
         return -EINVAL;
 
-    ASSERT(pcidevs_locked());
+    ASSERT(pcidevs_write_locked());
     pdev = pci_get_pdev_by_domain(d, seg, bus, devfn);
     if ( !pdev )
         return -ENODEV;
@@ -961,11 +1006,11 @@ int pci_release_devices(struct domain *d)
     u8 bus, devfn;
     int ret;
 
-    pcidevs_lock();
+    pcidevs_write_lock();
     ret = arch_pci_clean_pirqs(d);
     if ( ret )
     {
-        pcidevs_unlock();
+        pcidevs_write_unlock();
         return ret;
     }
     list_for_each_entry_safe ( pdev, tmp, &d->pdev_list, domain_list )
@@ -974,7 +1019,7 @@ int pci_release_devices(struct domain *d)
         devfn = pdev->devfn;
         ret = deassign_device(d, pdev->seg, bus, devfn) ?: ret;
     }
-    pcidevs_unlock();
+    pcidevs_write_unlock();
 
     return ret;
 }
@@ -1176,6 +1221,11 @@ static void __hwdom_init setup_one_hwdom_device(const struct setup_hwdom *ctxt,
                ctxt->d->domain_id, err);
 }
 
+/*
+ * It's safe to drop and re-acquire the write lock in this context without
+ * risking pdev disappearing because devices cannot be removed until the
+ * initial domain has been started.
+ */
 static int __hwdom_init _setup_hwdom_pci_devices(struct pci_seg *pseg, void *arg)
 {
     struct setup_hwdom *ctxt = arg;
@@ -1208,17 +1258,17 @@ static int __hwdom_init _setup_hwdom_pci_devices(struct pci_seg *pseg, void *arg
 
             if ( iommu_verbose )
             {
-                pcidevs_unlock();
+                pcidevs_write_unlock();
                 process_pending_softirqs();
-                pcidevs_lock();
+                pcidevs_write_lock();
             }
         }
 
         if ( !iommu_verbose )
         {
-            pcidevs_unlock();
+            pcidevs_write_unlock();
             process_pending_softirqs();
-            pcidevs_lock();
+            pcidevs_write_lock();
         }
     }
 
@@ -1230,9 +1280,9 @@ void __hwdom_init setup_hwdom_pci_devices(
 {
     struct setup_hwdom ctxt = { .d = d, .handler = handler };
 
-    pcidevs_lock();
+    pcidevs_write_lock();
     pci_segments_iterate(_setup_hwdom_pci_devices, &ctxt);
-    pcidevs_unlock();
+    pcidevs_write_unlock();
 }
 
 /* APEI not supported on ARM yet. */
@@ -1464,7 +1514,7 @@ static int device_assigned(u16 seg, u8 bus, u8 devfn)
     struct pci_dev *pdev;
     int rc = 0;
 
-    ASSERT(pcidevs_locked());
+    ASSERT(pcidevs_write_locked());
     pdev = pci_get_pdev(seg, bus, devfn);
 
     if ( !pdev )
@@ -1495,7 +1545,7 @@ static int assign_device(struct domain *d, u16 seg, u8 bus, u8 devfn, u32 flag)
         return -EXDEV;
 
     /* device_assigned() should already have cleared the device for assignment */
-    ASSERT(pcidevs_locked());
+    ASSERT(pcidevs_write_locked());
     pdev = pci_get_pdev(seg, bus, devfn);
     ASSERT(pdev && (pdev->domain == hardware_domain ||
                     pdev->domain == dom_io));
@@ -1687,7 +1737,7 @@ int iommu_do_pci_domctl(
         bus = PCI_BUS(machine_sbdf);
         devfn = PCI_DEVFN2(machine_sbdf);
 
-        pcidevs_lock();
+        pcidevs_write_lock();
         ret = device_assigned(seg, bus, devfn);
         if ( domctl->cmd == XEN_DOMCTL_test_assign_device )
         {
@@ -1700,7 +1750,7 @@ int iommu_do_pci_domctl(
         }
         else if ( !ret )
             ret = assign_device(d, seg, bus, devfn, flags);
-        pcidevs_unlock();
+        pcidevs_write_unlock();
         if ( ret == -ERESTART )
             ret = hypercall_create_continuation(__HYPERVISOR_domctl,
                                                 "h", u_domctl);
@@ -1732,9 +1782,9 @@ int iommu_do_pci_domctl(
         bus = PCI_BUS(machine_sbdf);
         devfn = PCI_DEVFN2(machine_sbdf);
 
-        pcidevs_lock();
+        pcidevs_write_lock();
         ret = deassign_device(d, seg, bus, devfn);
-        pcidevs_unlock();
+        pcidevs_write_unlock();
         break;
 
     default:
