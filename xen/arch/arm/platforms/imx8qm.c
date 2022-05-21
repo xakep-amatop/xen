@@ -442,7 +442,7 @@ int platform_assign_dev(struct domain *d, u8 devfn, struct dt_device_node *dev,
                    dev->full_name, ARRAY_SIZE(resource_id));
             len = ARRAY_SIZE(resource_id);
         }
-        if ( !dt_property_read_u32_array(dev, "fsl,sc_rsrc_id",
+        if ( dt_property_read_u32_array(dev, "fsl,sc_rsrc_id",
                                          resource_id, len) )
         {
             printk(XENLOG_ERR "Failed to get resource IDs\n");
