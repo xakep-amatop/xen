@@ -1333,6 +1333,13 @@ int map_regions_p2mt(struct domain *d,
                      mfn_t mfn,
                      p2m_type_t p2mt)
 {
+    if (((long)gfn_x(gfn) >= (GUEST_RAM0_BASE >> PAGE_SHIFT)) &&
+        (((long)gfn_x(gfn) + nr) <=
+        ((GUEST_RAM0_BASE + GUEST_RAM0_SIZE)>> PAGE_SHIFT)))
+    {
+        p2m_remove_mapping(d, gfn, nr, mfn);
+        return p2m_insert_mapping(d, gfn, nr, mfn, p2m_mmio_direct_nc_x);
+    }
     return p2m_insert_mapping(d, gfn, nr, mfn, p2mt);
 }
 
