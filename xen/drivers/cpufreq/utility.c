@@ -19,6 +19,7 @@
  *
  */
 
+#include <xen/alternative-call.h>
 #include <xen/errno.h>
 #include <xen/cpumask.h>
 #include <xen/types.h>
