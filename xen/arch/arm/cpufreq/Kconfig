@@ -1,0 +1,16 @@
+config CPUFREQ_SCPI
+	bool "Enable cpufreq_scpi driver"
+	depends on HAS_CPUFREQ
+	help
+	  Enable cpufreq_scpi driver. This driver implements CPU
+	  frequency scaling mechaninsm via SCPI protocol. It uses
+	  mailboxes to communicate with SC-Firmware, which provices
+	  SCPI interface to control hardware
+
+config CPUFREQ_IMX
+	bool "Enable cpufreq_imx driver"
+	depends on HAS_CPUFREQ
+	help
+	  Enable cpufreg_imx driver. This driver implements CPU
+	  frequency scaling for i.MX8 boards. It uses scfw rpc to
+	  access hardware resoucers.
