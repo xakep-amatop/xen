@@ -28,6 +28,7 @@
 #include <asm/platform.h>
 #include <asm/platforms/imx8qm.h>
 #include <asm/smccc.h>
+#include <asm/vscmi.h>
 #include <xen/config.h>
 #include <xen/err.h>
 #include <xen/guest_access.h>
@@ -270,6 +271,11 @@ static bool imx8qm_smc(struct cpu_user_regs *regs)
                     "IMX8 firmware Error: no SMCCC 1.1 support. Disabling firmware calls\n");
 
         return false;
+    }
+
+    if (get_user_reg(regs, 0) ==
+        ARM_SMCCC_SCMI_MBOX_TRIGGER) {
+        return vscmi_handle_call(regs);
     }
 
     /*
