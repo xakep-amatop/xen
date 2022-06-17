@@ -3260,6 +3260,22 @@ void __init create_domUs(void)
     }
 }
 
+/*
+ * Returns number of pages that should be mapped for system use in dom0
+ * This makes possible to leave room for some magic pages that should be
+ * owned by dom0, but do not map them by as regular dom0 ram.
+ * Similar mechanism was implemented in alloc_magic_pages for guest domains.
+ */
+static unsigned int get_magic_page_count(void)
+{
+    unsigned int count = 0;
+
+    if ( dom0_vscmi )
+        count++;
+
+    return count;
+}
+
 static int __init construct_dom0(struct domain *d)
 {
     struct kernel_info kinfo = {};
@@ -3282,7 +3298,7 @@ static int __init construct_dom0(struct domain *d)
 
     iommu_hwdom_init(d);
 
-    d->max_pages = dom0_mem >> PAGE_SHIFT;
+    d->max_pages = (dom0_mem >> PAGE_SHIFT) + get_magic_page_count();
 
     kinfo.unassigned_mem = dom0_mem;
     kinfo.d = d;
