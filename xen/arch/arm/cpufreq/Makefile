@@ -5,3 +5,4 @@ obj-$(CONFIG_CPUFREQ_SCPI) += mailbox.o
 obj-$(CONFIG_CPUFREQ_SCPI) += arm-smc-mailbox.o
 obj-$(CONFIG_CPUFREQ_SCPI) += rcar_gen3_thermal.o
 obj-$(CONFIG_CPUFREQ_IMX) += imx_sc_cpufreq.o
+obj-$(CONFIG_CPUFREQ_IMX) += imx_sc_thermal.o
