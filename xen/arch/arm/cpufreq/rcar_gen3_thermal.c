@@ -520,7 +520,7 @@ static void thermal_zone_device_update(struct rcar_thermal_priv *priv)
 		handle_thermal_trip(temp, i);
 }
 
-static void rcar_gen3_thermal_work(unsigned long data)
+static void rcar_gen3_thermal_work(void *data)
 {
 	struct rcar_thermal_priv *priv = (struct rcar_thermal_priv *)data;
 
