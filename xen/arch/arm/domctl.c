@@ -179,7 +179,7 @@ long arch_do_domctl(struct xen_domctl *domctl, struct domain *d,
     }
 
     case XEN_DOMCTL_vscmi_init:
-        return domain_vscmi_init(d, domctl->u.vscmi_init.gfn);
+        return domain_vscmi_init(d, _gfn(domctl->u.vscmi_init.gfn));
 
     default:
     {

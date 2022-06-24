@@ -353,7 +353,7 @@ bool vscmi_handle_call(struct cpu_user_regs *regs)
         return false;
     }
 
-    flush_page_to_ram(scmi_mfn, false);
+    flush_page_to_ram(mfn_x(scmi_mfn), false);
     res = access_guest_memory_by_ipa(current->domain, scmi_ipa, data,
                                      VSCMI_SHM_SIZE, false);
     if ( res )
@@ -383,7 +383,7 @@ bool vscmi_handle_call(struct cpu_user_regs *regs)
     res = access_guest_memory_by_ipa(current->domain, scmi_ipa, data,
                                      VSCMI_SHM_SIZE, true);
 
-    flush_page_to_ram(scmi_mfn, false);
+    flush_page_to_ram(mfn_x(scmi_mfn), false);
     if ( res )
     {
         gprintk(XENLOG_ERR, "Error writing guest memory %d\n", res);
