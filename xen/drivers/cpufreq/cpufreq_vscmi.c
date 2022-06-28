@@ -117,13 +117,12 @@ static int cpufreq_governor_vscmi(struct cpufreq_policy *policy,
 
         break;
     case CPUFREQ_GOV_STOP:
-        if ( start_cnt == 0 )
+        if ( start_cnt-- > 1 )
             break;
 
         unregister_vscmi_notifier(&cpufreq_vscmi_cpu_nfb);
         unregister_guest_pm_notifier(&cpufreq_vscmi_cpu_guest_pm_nfb);
 
-        start_cnt--;
         break;
     case CPUFREQ_GOV_LIMITS:
         break;
