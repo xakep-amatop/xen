@@ -297,6 +297,13 @@ config VSCMI
 	  Enable vSCMI server in hypervsior. Guest will be able issue SCMI requests,
 	  that will be handler by hypervisor.
 
+config VSCMI_SUBVENDOR
+	 string
+	 default "Renesas" if HAS_CPUFREQ && CPUFREQ_SCPI
+	 default "i.MX8" if HAS_CPUFREQ && CPUFREQ_IMX
+	 help
+		Subvendor name which should be populated as responce for SCMI request.
+
 source "arch/arm/platforms/Kconfig"
 
 source "common/Kconfig"

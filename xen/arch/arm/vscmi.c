@@ -28,7 +28,11 @@
 /* One agent, one protocol */
 #define SCMI_PROTO_ATTRS (BIT(0, UL) | BIT(8, UL))
 #define SCMI_VENDOR "XenTroops"
+#ifdef CONFIG_VSCMI_SUBVENDOR
+#define SCMI_SUBVENDOR CONFIG_VSCMI_SUBVENDOR
+#else
 #define SCMI_SUBVENDOR "Renesas"
+#endif
 #define SCMI_AGENT "XEN"
 
 #define PERF_SUSTAINED_FREQ_KHZ 1000000
