@@ -51,14 +51,14 @@ static DEFINE_SPINLOCK(freq_lock);
 #define OPP_MAX 8
 
 struct freq_opp {
-	u64 freq;
-	u32 m_volt;
+    u64 freq;
+    u32 m_volt;
     u32 clock_latency;
 };
 
 struct dvfs_info {
-	unsigned int count;
-	struct freq_opp opps[OPP_MAX];
+    unsigned int count;
+    struct freq_opp opps[OPP_MAX];
 };
 
 struct cpufreq_data
@@ -68,7 +68,6 @@ struct cpufreq_data
     struct cpufreq_frequency_table *freq_table;
     bool turbo_prohibited;
     int resource; /* resource id this CPU belongs to */
-
 };
 
 static struct cpufreq_data *cpufreq_driver_data[NR_CPUS];
@@ -112,7 +111,7 @@ static const struct dvfs_info *dvfs_get_info(unsigned int cpu)
     int ret;
     u32 val;
 
-    if (cpufreq_dvfs_info[cpu])
+    if ( cpufreq_dvfs_info[cpu] )
     {
         return cpufreq_dvfs_info[cpu];
     }
@@ -124,7 +123,7 @@ static const struct dvfs_info *dvfs_get_info(unsigned int cpu)
     cpu_dt = dev_to_dt(cpu_dev);
 
     opp_np = dt_parse_phandle(cpu_dt, "operating-points-v2", 0);
-    if (!opp_np)
+    if ( !opp_np )
     {
         printk (XENLOG_ERR "Unable to find opp node for cpu: %s\n",
                 cpu_dt->full_name);
@@ -136,17 +135,18 @@ static const struct dvfs_info *dvfs_get_info(unsigned int cpu)
     {
         ret = dt_property_read_u64(child, "opp-hz",
                 &info->opps[info->count].freq);
-        if (!ret)
+        if ( !ret )
             printk(XENLOG_WARNING "%s: opp-hz is not set\n", child->name);
 
         ret = dt_property_read_u32(child, "opp-microvolt", &val);
-        if (!ret)
-            printk(XENLOG_WARNING "%s: opp-microvolt is not set\n", child->name);
+        if ( !ret )
+            printk(XENLOG_WARNING
+                    "%s: opp-microvolt is not set\n", child->name);
 
         info->opps[info->count].m_volt = val;
 
         ret = dt_property_read_u32(child, "clock-latency-ns", &val);
-        if (!ret)
+        if ( !ret )
             printk(XENLOG_WARNING "%s: clock-latency-ns is not set\n",
                     child->full_name);
 
@@ -171,20 +171,21 @@ static int dvfs_get_idx(struct cpufreq_data *data, int *idx)
     ret = sc_pm_get_clock_rate(mu_ipcHandle, data->resource,
         SC_PM_CLK_CPU, &rate);
 
-    if (ret) {
+    if ( ret )
+    {
         printk(XENLOG_ERR "read cpu clock %d failed, ret %d\n",
                 data->resource, ret);
         return ret;
     }
 
     info = dvfs_get_info(data->cpu);
-    if ( IS_ERR(info))
+    if ( IS_ERR(info) )
     {
         return PTR_ERR(info);
     }
 
-    for (i=0; i< info->count; i++)
-        if (info->opps[i].freq == rate)
+    for ( i = 0; i < info->count; i++ )
+        if ( info->opps[i].freq == rate )
         {
             *idx = i;
             return 0;
@@ -198,7 +199,7 @@ static int dvfs_set(int resource_id, unsigned int freq)
     struct arm_smccc_res res;
     arm_smccc_smc(IMX_SIP_CPUFREQ, IMX_SIP_SET_CPUFREQ, resource_id,
             freq * 1000 /* kHz to Hz */, &res);
-    if (res.a0)
+    if ( res.a0 )
         return -EINVAL;
 
     return 0;
@@ -231,11 +232,11 @@ static unsigned int imx_cpufreq_get(unsigned int cpu)
         return 0;
 
     info = dvfs_get_info(cpu);
-    if ( IS_ERR(info) < 0)
+    if ( IS_ERR(info) < 0 )
         return 0;
 
     policy = per_cpu(cpufreq_cpu_policy, cpu);
-    if ( !policy || !(data = cpufreq_driver_data[policy->cpu]))
+    if ( !policy || !(data = cpufreq_driver_data[policy->cpu]) )
         return 0;
 
     ret = dvfs_get_idx(data, &idx);
@@ -264,7 +265,7 @@ static int imx_cpufreq_target_unlocked(struct cpufreq_policy *policy,
         return -ENODEV;
 
     if ( policy->turbo == CPUFREQ_TURBO_DISABLED ||
-            cpufreq_driver_data[policy->cpu]->turbo_prohibited)
+            cpufreq_driver_data[policy->cpu]->turbo_prohibited )
         if ( target_freq > policy->cpuinfo.second_max_freq )
             target_freq = policy->cpuinfo.second_max_freq;
 
@@ -295,7 +296,7 @@ static int imx_cpufreq_target_unlocked(struct cpufreq_policy *policy,
     if ( result < 0 )
         return result;
 
-    if (cpufreq_debug)
+    if ( cpufreq_debug )
         printk(XENLOG_ERR "Switch CPU%u freq: %u kHz --> %u kHz\n", policy->cpu,
                freqs.old, freqs.new);
 
@@ -363,7 +364,8 @@ static int device_domain_resource(struct device *cpu_dev)
                 0,
                 &clock_specs);
 
-    if (clock_specs.args_count > 2) {
+    if ( clock_specs.args_count > 2 )
+    {
         printk(XENLOG_WARNING "%s: too many cells in clock specifier %d\n",
             cpu_dev->of_node->name, clock_specs.args_count);
     }
@@ -507,14 +509,14 @@ static int imx_cpufreq_cpu_exit(struct cpufreq_policy *policy)
 {
     struct cpufreq_data *data = cpufreq_driver_data[policy->cpu];
 
-    if ( data )
-    {
-        xfree(data->freq_table);
-        xfree(data);
-        cpufreq_driver_data[policy->cpu] = NULL;
-        xfree(cpufreq_dvfs_info[policy->cpu]);
-        cpufreq_dvfs_info[policy->cpu] = NULL;
-    }
+    if ( !data )
+        return 0;
+
+    xfree(data->freq_table);
+    xfree(data);
+    cpufreq_driver_data[policy->cpu] = NULL;
+    xfree(cpufreq_dvfs_info[policy->cpu]);
+    cpufreq_dvfs_info[policy->cpu] = NULL;
 
     return 0;
 }
@@ -572,21 +574,6 @@ int imx_cpufreq_throttle(bool enable, int cpu)
 int cpufreq_cpu_init(unsigned int cpuid)
 {
     return cpufreq_add_cpu(cpuid);
-}
-
-static int thermal_init(void)
-{
-	struct dt_device_node *ths;
-	unsigned int num_ths = 0;
-	int rc;
-
-	dt_for_each_device_node(dt_host, ths) {
-		rc = device_init(ths, DEVICE_THS, NULL);
-		if (!rc)
-			num_ths ++;
-	}
-
-	return (num_ths > 0) ? 0 : -ENODEV;
 }
 
 void cpufreq_debug_toggle(unsigned char key)
@@ -911,12 +898,6 @@ static int __init cpufreq_imx_driver_init(void)
     if ( cpufreq_controller != FREQCTL_xen )
         return 0;
 
-    ret = thermal_init();
-    if ( ret )
-    {
-        printk(XENLOG_ERR "failed to initialize thermal (%d)\n", ret);
-        goto out;
-    }
 
     ret = cpufreq_register_driver(&imx_cpufreq_driver);
     if ( ret )

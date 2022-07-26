@@ -16,6 +16,7 @@ config ARM
 	select HAS_PDX
 	select IOMMU_FORCE_PT_SHARE
 	select HAS_CPUFREQ
+	select HAS_THERMAL
 	select HAS_PM
 
 config ARCH_DEFCONFIG
@@ -109,6 +110,8 @@ config TEE
 source "arch/arm/tee/Kconfig"
 
 source "arch/arm/cpufreq/Kconfig"
+
+source "arch/arm/thermal/Kconfig"
 
 endmenu
 
