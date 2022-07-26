@@ -56,6 +56,12 @@ struct perf_limits {
     uint32_t min_policy_pct;
 };
 
+enum cpufreq_policy_owner
+{
+    OWNER_CPUFREQ = 0,
+    OWNER_THERMAL
+};
+
 struct cpufreq_policy {
     cpumask_var_t       cpus;          /* affected CPUs */
     unsigned int        shared_type;   /* ANY or ALL affected CPUs
@@ -76,11 +82,15 @@ struct cpufreq_policy {
                                  * -1 for disable, 1 for enabled
                                  * See CPUFREQ_TURBO_* below for defines */
     bool_t              aperf_mperf; /* CPU has APERF/MPERF MSRs */
+
+    enum cpufreq_policy_owner owner;
 };
 DECLARE_PER_CPU(struct cpufreq_policy *, cpufreq_cpu_policy);
 
 extern int __cpufreq_set_policy(struct cpufreq_policy *data,
                                 struct cpufreq_policy *policy);
+extern struct cpufreq_policy *__cpufreq_get_policy(unsigned int cpuid);
+
 
 #define CPUFREQ_SHARED_TYPE_NONE (0) /* None */
 #define CPUFREQ_SHARED_TYPE_HW   (1) /* HW does needed coordination */
@@ -126,10 +136,13 @@ extern int cpufreq_register_governor(struct cpufreq_governor *governor);
 extern struct cpufreq_governor *__find_governor(const char *governor);
 #define CPUFREQ_DEFAULT_GOVERNOR &cpufreq_gov_dbs
 
+extern int __cpufreq_policy_set_owner(struct cpufreq_policy *policy,
+        enum cpufreq_policy_owner owner);
 /* pass a target to the cpufreq driver */
 extern int __cpufreq_driver_target(struct cpufreq_policy *policy,
                                    unsigned int target_freq,
-                                   unsigned int relation);
+                                   unsigned int relation,
+                                   enum cpufreq_policy_owner owner);
 
 #define GOV_GETAVG     1
 #define USR_GETAVG     2
