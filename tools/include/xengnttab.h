@@ -335,6 +335,21 @@ int xengnttab_dmabuf_exp_from_refs_v2(xengnttab_handle *xgt, uint32_t domid,
                                       const uint32_t *refs, uint32_t *fd,
                                       uint32_t data_ofs);
 
+/**
+ * Map grant references @refs of count @count provided
+ * by the foreign domain @domid with flags @flags to the dma buffer [1],
+ * pointed by @fd file decriptor.
+ * Accepts @data_ofs offset of the data in the buffer.
+ *
+ * Returns 0 if dma-buf was mapped successfully.
+ *
+ * [1] https://elixir.bootlin.com/linux/latest/source/Documentation/driver-api/dma-buf.rst
+ */
+int xengnttab_dmabuf_map_refs_to_buf(xengnttab_handle *xgt, uint32_t domid,
+                                      uint32_t flags, uint32_t count,
+                                      const uint32_t *refs, uint32_t fd,
+                                      uint32_t data_ofs);
+
 /*
  * This will block until the dma-buf with the file descriptor @fd is
  * released. This is only valid for buffers created with
@@ -368,6 +383,13 @@ int xengnttab_dmabuf_imp_to_refs_v2(xengnttab_handle *xgt, uint32_t domid,
  * IOCTL_GNTDEV_DMABUF_IMP_TO_REFS.
  */
 int xengnttab_dmabuf_imp_release(xengnttab_handle *xgt, uint32_t fd);
+
+/*
+ * This will close all references to mapped buffer, so it can be
+ * released by the owner. This is only valid for buffers created with
+ * IOCTL_GNTDEV_DMABUF_MAP_REFS_TO_BUF.
+ */
+int xengnttab_dmabuf_map_release(xengnttab_handle *xgt, uint32_t fd);
 
 /*
  * Grant Sharing Interface (allocating and granting pages to others)

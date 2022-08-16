@@ -42,3 +42,9 @@ VERS_1.3 {
 		xengnttab_dmabuf_exp_from_refs_v2;
 		xengnttab_dmabuf_imp_to_refs_v2;
 } VERS_1.2;
+
+VERS_1.4 {
+    global:
+		xengnttab_dmabuf_map_refs_to_buf;
+		xengnttab_dmabuf_map_release;
+} VERS_1.3;

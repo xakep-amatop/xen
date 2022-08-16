@@ -328,4 +328,49 @@ struct ioctl_gntdev_dmabuf_imp_to_refs_v2 {
     uint32_t refs[1];
 };
 
+/*
+ * Fd mapping ioctls allows to map @fd to @refs.
+ *
+ * Allows gntdev to map scatter-gather table to the existing dma-buf
+ * file destriptor. It provides the same functionality as
+ * DMABUF_EXP_FROM_REFS_V2 ioctls,
+ * but maps sc table on top of the existing buffer memory, instead of
+ * allocting memory. This is useful when exporter should work with external
+ * buffer.
+ */
+
+#define IOCTL_GNTDEV_DMABUF_MAP_REFS_TO_BUF \
+       _IOC(_IOC_NONE, 'G', 15, \
+         sizeof(struct ioctl_gntdev_dmabuf_map_refs_to_buf))
+struct ioctl_gntdev_dmabuf_map_refs_to_buf {
+       /* IN parameters. */
+       /* Specific options for this dma-buf: see GNTDEV_DMA_FLAG_XXX. */
+       uint32_t flags;
+       /* Number of grant references in @refs array. */
+       uint32_t count;
+       /* Offset of the data in the dma-buf. */
+       uint32_t data_ofs;
+       /* File descriptor of the dma-buf. */
+       uint32_t fd;
+       /* The domain ID of the grant references to be mapped. */
+       uint32_t domid;
+       /* Variable IN parameter. */
+       /* Array of grant references of size @count. */
+       uint32_t refs[1];
+};
+
+/*
+ * This will close all references to the mapped buffer with file descriptor
+ * @fd, so it can be released by the owner. This is only valid for buffers
+ * created with IOCTL_GNTDEV_DMABUF_MAP_REFS_TO_BUF.
+ */
+#define IOCTL_GNTDEV_DMABUF_MAP_RELEASE \
+       _IOC(_IOC_NONE, 'G', 16, \
+            sizeof(struct ioctl_gntdev_dmabuf_imp_release))
+struct ioctl_gntdev_dmabuf_map_release {
+       /* IN parameters */
+       uint32_t fd;
+       uint32_t reserved;
+};
+
 #endif /* __LINUX_PUBLIC_GNTDEV_H__ */

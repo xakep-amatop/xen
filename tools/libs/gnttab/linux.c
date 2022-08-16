@@ -393,6 +393,50 @@ out:
     return rc;
 }
 
+int osdep_gnttab_dmabuf_map_refs_to_buf(xengnttab_handle *xgt, uint32_t domid,
+                                         uint32_t flags, uint32_t count,
+                                         const uint32_t *refs,
+                                         uint32_t dmabuf_fd,
+                                         uint32_t data_ofs)
+{
+    struct ioctl_gntdev_dmabuf_map_refs_to_buf *refs_to_fd = NULL;
+    int rc = -1;
+
+    if ( !count )
+    {
+        errno = EINVAL;
+        goto out;
+    }
+
+    refs_to_fd = malloc(sizeof(*refs_to_fd) +
+                          (count - 1) * sizeof(refs_to_fd->refs[0]));
+    if ( !refs_to_fd )
+    {
+        errno = ENOMEM;
+        goto out;
+    }
+
+    refs_to_fd->flags = flags;
+    refs_to_fd->count = count;
+    refs_to_fd->domid = domid;
+    refs_to_fd->data_ofs = data_ofs;
+    refs_to_fd->fd = dmabuf_fd;
+
+    memcpy(refs_to_fd->refs, refs, count * sizeof(refs_to_fd->refs[0]));
+
+    if ( (rc = ioctl(xgt->fd, IOCTL_GNTDEV_DMABUF_MAP_REFS_TO_BUF,
+                     refs_to_fd)) )
+    {
+        GTERROR(xgt->logger, "ioctl GNTDEV_DMABUF_MAP_REFS_TO_BUF failed");
+        goto out;
+    }
+
+    rc = 0;
+out:
+    free(refs_to_fd);
+    return rc;
+}
+
 int osdep_gnttab_dmabuf_exp_wait_released(xengnttab_handle *xgt,
                                           uint32_t fd, uint32_t wait_to_ms)
 {
@@ -504,6 +548,19 @@ int osdep_gnttab_dmabuf_imp_release(xengnttab_handle *xgt, uint32_t fd)
 
     if ( (rc = ioctl(xgt->fd, IOCTL_GNTDEV_DMABUF_IMP_RELEASE, &release)) )
         GTERROR(xgt->logger, "ioctl DMABUF_IMP_RELEASE failed");
+
+    return rc;
+}
+
+int osdep_gnttab_dmabuf_map_release(xengnttab_handle *xgt, uint32_t fd)
+{
+    struct ioctl_gntdev_dmabuf_map_release release;
+    int rc;
+
+    release.fd = fd;
+
+    if ( (rc = ioctl(xgt->fd, IOCTL_GNTDEV_DMABUF_MAP_RELEASE, &release)) )
+        GTERROR(xgt->logger, "ioctl DMABUF_MAP_RELEASE failed");
 
     return rc;
 }

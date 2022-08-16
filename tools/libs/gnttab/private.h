@@ -41,6 +41,11 @@ int osdep_gnttab_dmabuf_exp_from_refs_v2(xengnttab_handle *xgt, uint32_t domid,
                                          const uint32_t *refs, uint32_t *fd,
                                          uint32_t data_ofs);
 
+int osdep_gnttab_dmabuf_map_refs_to_buf(xengnttab_handle *xgt,
+                                         uint32_t domid, uint32_t flags,
+                                         uint32_t count, const uint32_t *refs,
+                                         uint32_t fd, uint32_t data_ofs);
+
 int osdep_gnttab_dmabuf_exp_wait_released(xengnttab_handle *xgt,
                                           uint32_t fd, uint32_t wait_to_ms);
 
@@ -53,6 +58,7 @@ int osdep_gnttab_dmabuf_imp_to_refs_v2(xengnttab_handle *xgt, uint32_t domid,
                                        uint32_t *refs, uint32_t *data_ofs);
 
 int osdep_gnttab_dmabuf_imp_release(xengnttab_handle *xgt, uint32_t fd);
+int osdep_gnttab_dmabuf_map_release(xengnttab_handle *xgt, uint32_t fd);
 
 int osdep_gntshr_open(xengntshr_handle *xgs);
 int osdep_gntshr_close(xengntshr_handle *xgs);
