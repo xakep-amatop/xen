@@ -826,6 +826,27 @@ static int __init gicv3_populate_rdist(void)
     return -ENODEV;
 }
 
+static void gicv3_populate_sysregs(void)
+{
+    /* Enable system registers */
+    gicv3_enable_sre();
+
+    /* No priority grouping */
+    WRITE_SYSREG(0, ICC_BPR1_EL1);
+
+    /* Set priority mask register */
+    WRITE_SYSREG(DEFAULT_PMR_VALUE, ICC_PMR_EL1);
+
+    /* EOI drops priority, DIR deactivates the interrupt (mode 1) */
+    WRITE_SYSREG(GICC_CTLR_EL1_EOImode_drop, ICC_CTLR_EL1);
+
+    /* Enable Group1 interrupts */
+    WRITE_SYSREG(1, ICC_IGRPEN1_EL1);
+
+    /* Sync at once at the end of cpu interface configuration */
+    isb();
+}
+
 static int gicv3_cpu_init(void)
 {
     int i, ret;
@@ -872,24 +893,7 @@ static int gicv3_cpu_init(void)
 
     gicv3_redist_wait_for_rwp();
 
-    /* Enable system registers */
-    gicv3_enable_sre();
-
-    /* No priority grouping */
-    WRITE_SYSREG(0, ICC_BPR1_EL1);
-
-    /* Set priority mask register */
-    WRITE_SYSREG(DEFAULT_PMR_VALUE, ICC_PMR_EL1);
-
-    /* EOI drops priority, DIR deactivates the interrupt (mode 1) */
-    WRITE_SYSREG(GICC_CTLR_EL1_EOImode_drop, ICC_CTLR_EL1);
-
-    /* Enable Group1 interrupts */
-    WRITE_SYSREG(1, ICC_IGRPEN1_EL1);
-
-    /* Sync at once at the end of cpu interface configuration */
-    isb();
-
+    gicv3_populate_sysregs();
     return 0;
 }
 
@@ -1855,6 +1859,16 @@ out:
 
     return res;
 }
+static int gicv3_suspend(void)
+{
+    return 0;
+}
+
+static void gicv3_resume(void)
+{
+    gicv3_populate_sysregs();
+    gicv3_hyp_init();
+}
 
 static const struct gic_hw_operations gicv3_ops = {
     .info                = &gicv3_info,
@@ -1889,6 +1903,8 @@ static const struct gic_hw_operations gicv3_ops = {
 #endif
     .iomem_deny_access   = gicv3_iomem_deny_access,
     .do_LPI              = gicv3_do_LPI,
+    .suspend             = gicv3_suspend,
+    .resume              = gicv3_resume,
 };
 
 static int __init gicv3_dt_preinit(struct dt_device_node *node, const void *data)
