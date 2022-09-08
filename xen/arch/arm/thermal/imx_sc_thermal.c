@@ -377,6 +377,8 @@ static int __init imx_sc_thermal_probe(struct dt_device_node *np)
         if ( index >= MAX_SENSORS )
             break;
 
+        dt_device_set_used_by(child, DOMID_XEN);
+
         sensor = xzalloc(struct imx_sc_sensor);
         if ( !sensor )
             goto err_free;
@@ -441,8 +443,6 @@ static int __init imx_sc_thermal_driver_init(void)
         printk(XENLOG_WARNING "Can't find thermal node\n");
         return -ENODEV;
     }
-
-    dt_device_set_used_by(np, DOMID_XEN);
 
     ret = imx_sc_thermal_probe(np);
     if ( ret )
