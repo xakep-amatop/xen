@@ -30,6 +30,8 @@
 #include <asm/vgic.h>
 #include <asm/vtimer.h>
 
+#include <public/sched.h>
+
 #include "vpci.h"
 #include "vuart.h"
 
