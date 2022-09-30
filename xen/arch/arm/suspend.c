@@ -6,6 +6,8 @@
 #include <asm/event.h>
 #include <asm/psci.h>
 #include <asm/suspend.h>
+#include <asm/platform.h>
+#include <public/sched.h>
 
 struct cpu_context cpu_context;
 
