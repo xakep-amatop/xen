@@ -30,6 +30,7 @@
 #include <asm/page.h>
 #include <asm/p2m.h>
 #include <public/domctl.h>
+#include <public/sched.h>
 #include <xsm/xsm.h>
 
 static DEFINE_SPINLOCK(domctl_lock);
