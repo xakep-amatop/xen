@@ -1556,7 +1556,8 @@ static long domain_watchdog(struct domain *d, uint32_t id, uint32_t timeout)
         {
             if ( test_and_set_bit(id, &d->watchdog_inuse_map) )
                 continue;
-            set_timer(&d->watchdog_timer[id], NOW() + SECONDS(timeout));
+            d->watchdog_timer[id].timeout = timeout;
+            set_timer(&d->watchdog_timer[id].timer, NOW() + SECONDS(timeout));
             break;
         }
         spin_unlock(&d->watchdog_lock);
@@ -1572,12 +1573,12 @@ static long domain_watchdog(struct domain *d, uint32_t id, uint32_t timeout)
 
     if ( timeout == 0 )
     {
-        stop_timer(&d->watchdog_timer[id]);
+        stop_timer(&d->watchdog_timer[id].timer);
         clear_bit(id, &d->watchdog_inuse_map);
     }
     else
     {
-        set_timer(&d->watchdog_timer[id], NOW() + SECONDS(timeout));
+        set_timer(&d->watchdog_timer[id].timer, NOW() + SECONDS(timeout));
     }
 
     spin_unlock(&d->watchdog_lock);
@@ -1593,7 +1594,7 @@ void watchdog_domain_init(struct domain *d)
     d->watchdog_inuse_map = 0;
 
     for ( i = 0; i < NR_DOMAIN_WATCHDOG_TIMERS; i++ )
-        init_timer(&d->watchdog_timer[i], domain_watchdog_timeout, d, 0);
+        init_timer(&d->watchdog_timer[i].timer, domain_watchdog_timeout, d, 0);
 }
 
 void watchdog_domain_destroy(struct domain *d)
@@ -1601,7 +1602,7 @@ void watchdog_domain_destroy(struct domain *d)
     unsigned int i;
 
     for ( i = 0; i < NR_DOMAIN_WATCHDOG_TIMERS; i++ )
-        kill_timer(&d->watchdog_timer[i]);
+        kill_timer(&d->watchdog_timer[i].timer);
 }
 
 void watchdog_domain_suspend(struct domain *d)
