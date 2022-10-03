@@ -357,9 +357,18 @@ bool do_vpsci_0_2_call(struct cpu_user_regs *regs, uint32_t fid)
     {
         register_t epoint = PSCI_ARG(regs,1);
         register_t cid = PSCI_ARG(regs,2);
+        register_t ret;
 
         perfc_incr(vpsci_system_suspend);
-        PSCI_SET_RESULT(regs, do_psci_1_0_system_suspend(epoint, cid));
+        /* Set the result to PSCI_SUCCESS if the call fails.
+         * Otherwise preserve the context_id in x0. For now 
+         * we don't support the case where the system is suspended
+         * to a shallower level and PSCI_SUCCESS is returned to the 
+         * caller.
+         */
+        ret = do_psci_1_0_system_suspend(epoint, cid);
+        if ( ret != PSCI_SUCCESS )
+            PSCI_SET_RESULT(regs, ret);
         return true;
     }
 
