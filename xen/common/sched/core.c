@@ -1614,9 +1614,7 @@ void watchdog_domain_suspend(struct domain *d)
     {
         if ( test_bit(i, &d->watchdog_inuse_map) )
         {
-            struct timer *timer = &d->watchdog_timer[i];
-            timer->suspended = NOW();
-            stop_timer(timer);
+            stop_timer(&d->watchdog_timer[i].timer);
         }
     }
 
@@ -1633,9 +1631,8 @@ void watchdog_domain_resume(struct domain *d)
     {
         if ( test_bit(i, &d->watchdog_inuse_map) )
         {
-            struct timer *timer = &d->watchdog_timer[i];
-            s_time_t sleep_interval = NOW() - timer->suspended;
-            set_timer(timer, timer->expires + sleep_interval);
+            set_timer(&d->watchdog_timer[i].timer,
+                      NOW() + SECONDS(d->watchdog_timer[i].timeout));
         }
     }
 
