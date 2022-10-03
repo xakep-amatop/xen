@@ -261,6 +261,10 @@ int32_t domain_suspend(register_t epoint, register_t cid)
             return PSCI_DENIED;
     }
 
+    //TODO: add support for suspending from any VCPU
+    if (current->vcpu_id != 0)
+        return PSCI_DENIED;
+
     /*
      * Prepare the calling VCPU for suspend (reset its context, save entry point
      * into pc and context ID into r0/x0 as specified by PSCI SYSTEM_SUSPEND)
