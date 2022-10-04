@@ -461,9 +461,7 @@ int gic_suspend(void)
     if ( !gic_hw_ops->suspend || !gic_hw_ops->resume )
         return -ENOSYS;
 
-    gic_hw_ops->suspend();
-
-    return 0;
+    return gic_hw_ops->suspend();
 }
 
 void gic_resume(void)
