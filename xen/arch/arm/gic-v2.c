@@ -130,8 +130,6 @@ struct gicv2_context {
 
 static struct gicv2_context gicv2_context;
 
-static void gicv2_alloc_context(struct gicv2_context *gc);
-
 static inline void writeb_gicd(uint8_t val, unsigned int offset)
 {
     writeb_relaxed(val, gicv2.map_dbase + offset);
@@ -1254,6 +1252,40 @@ static void __init gicv2_acpi_init(void)
 static void __init gicv2_acpi_init(void) { }
 #endif
 
+static int gicv2_alloc_context(struct gicv2_context *gc)
+{
+    uint32_t n = gicv2_info.nr_lines;
+
+    gc->gicd_isenabler = xzalloc_array(uint32_t, DIV_ROUND_UP(n, 32));
+    if ( !gc->gicd_isenabler )
+        goto err_free;
+
+    gc->gicd_isactiver = xzalloc_array(uint32_t, DIV_ROUND_UP(n, 32));
+    if ( !gc->gicd_isactiver )
+        goto err_free;
+
+    gc->gicd_itargetsr = xzalloc_array(uint32_t, DIV_ROUND_UP(n, 4));
+    if ( !gc->gicd_itargetsr )
+        goto err_free;
+
+    gc->gicd_ipriorityr = xzalloc_array(uint32_t, DIV_ROUND_UP(n, 4));
+    if ( !gc->gicd_ipriorityr )
+        goto err_free;
+
+    gc->gicd_icfgr = xzalloc_array(uint32_t, DIV_ROUND_UP(n, 16));
+    if ( !gc->gicd_icfgr )
+        goto err_free;
+
+    return 0;
+err_free:
+    xfree(gc->gicd_icfgr);
+    xfree(gc->gicd_ipriorityr);
+    xfree(gc->gicd_itargetsr);
+    xfree(gc->gicd_isactiver);
+    xfree(gc->gicd_isenabler);
+    return -ENOMEM;
+}
+
 static int __init gicv2_init(void)
 {
     uint32_t aliased_offset = 0;
@@ -1322,9 +1354,7 @@ static int __init gicv2_init(void)
     spin_unlock(&gicv2.lock);
 
     /* Allocate memory to be used for saving GIC context during the suspend */
-    gicv2_alloc_context(&gicv2_context);
-
-    return 0;
+    return gicv2_alloc_context(&gicv2_context);
 }
 
 static void gicv2_do_LPI(unsigned int lpi)
@@ -1333,55 +1363,20 @@ static void gicv2_do_LPI(unsigned int lpi)
     BUG();
 }
 
-static void gicv2_alloc_context(struct gicv2_context *gc)
-{
-    uint32_t n = gicv2_info.nr_lines;
-
-    gc->gicd_isenabler = xzalloc_array(uint32_t, DIV_ROUND_UP(n, 32));
-    if ( !gc->gicd_isenabler )
-        return;
-
-    gc->gicd_isactiver = xzalloc_array(uint32_t, DIV_ROUND_UP(n, 32));
-    if ( !gc->gicd_isactiver )
-        goto free_gicd_isenabler;
-
-    gc->gicd_itargetsr = xzalloc_array(uint32_t, DIV_ROUND_UP(n, 4));
-    if ( !gc->gicd_itargetsr )
-        goto free_gicd_isactiver;
-
-    gc->gicd_ipriorityr = xzalloc_array(uint32_t, DIV_ROUND_UP(n, 4));
-    if ( !gc->gicd_ipriorityr )
-        goto free_gicd_itargetsr;
-
-    gc->gicd_icfgr = xzalloc_array(uint32_t, DIV_ROUND_UP(n, 16));
-    if ( gc->gicd_icfgr )
-        return;
-
-    xfree(gc->gicd_ipriorityr);
-
-free_gicd_itargetsr:
-    xfree(gc->gicd_itargetsr);
-
-free_gicd_isactiver:
-    xfree(gc->gicd_isactiver);
-
-free_gicd_isenabler:
-    xfree(gc->gicd_isenabler);
-    gc->gicd_isenabler = NULL;
-}
-
 static int gicv2_suspend(void)
 {
     int i;
+
+    ASSERT(gicv2_context.gicd_isenabler);
+    ASSERT(gicv2_context.gicd_isactiver);
+    ASSERT(gicv2_context.gicd_ipriorityr);
+    ASSERT(gicv2_context.gicd_itargetsr);
+    ASSERT(gicv2_context.gicd_icfgr);
 
     /* Save GICC configuration */
     gicv2_context.gicc_ctlr = readl_gicc(GICC_CTLR);
     gicv2_context.gicc_pmr = readl_gicc(GICC_PMR);
     gicv2_context.gicc_bpr = readl_gicc(GICC_BPR);
-
-    /* If gicv2_alloc_context() hasn't allocated memory, return */
-    if ( !gicv2_context.gicd_isenabler )
-        return -ENOMEM;
 
     /* Save GICD configuration */
     gicv2_context.gicd_ctlr = readl_gicd(GICD_CTLR);
@@ -1417,20 +1412,17 @@ static void gicv2_resume(void)
     /* Disable CPU interface and distributor */
     writel_gicc(0, GICC_CTLR);
     writel_gicd(0, GICD_CTLR);
-    isb();
 
     /* Restore GICD configuration */
-    for ( i = 0; i < DIV_ROUND_UP(gicv2_info.nr_lines, 32); i++ )
+    for ( i = 0; i < DIV_ROUND_UP(gicv2_info.nr_lines, 32); i++ ) {
         writel_gicd(0xffffffff, GICD_ICENABLER + i * 4);
-
-    for ( i = 0; i < DIV_ROUND_UP(gicv2_info.nr_lines, 32); i++ )
         writel_gicd(gicv2_context.gicd_isenabler[i], GICD_ISENABLER + i * 4);
+    }
 
-    for ( i = 0; i < DIV_ROUND_UP(gicv2_info.nr_lines, 32); i++ )
+    for ( i = 0; i < DIV_ROUND_UP(gicv2_info.nr_lines, 32); i++ ) {
         writel_gicd(0xffffffff, GICD_ICACTIVER + i * 4);
-
-    for ( i = 0; i < DIV_ROUND_UP(gicv2_info.nr_lines, 32); i++ )
         writel_gicd(gicv2_context.gicd_isactiver[i], GICD_ISACTIVER + i * 4);
+    }
 
     for ( i = 0; i < DIV_ROUND_UP(gicv2_info.nr_lines, 4); i++ )
         writel_gicd(gicv2_context.gicd_ipriorityr[i], GICD_IPRIORITYR + i * 4);
@@ -1442,18 +1434,15 @@ static void gicv2_resume(void)
         writel_gicd(gicv2_context.gicd_icfgr[i], GICD_ICFGR + i * 4);
 
     /* Make sure all registers are restored and enable distributor */
-    isb();
     writel_gicd(gicv2_context.gicd_ctlr | GICD_CTL_ENABLE, GICD_CTLR);
 
     /* Restore GIC CPU interface configuration */
     writel_gicc(gicv2_context.gicc_pmr, GICC_PMR);
     writel_gicc(gicv2_context.gicc_bpr, GICC_BPR);
-    isb();
 
     /* Enable GIC CPU interface */
     writel_gicc(gicv2_context.gicc_ctlr | GICC_CTL_ENABLE | GICC_CTL_EOI,
                 GICC_CTLR);
-    isb();
 }
 
 const static struct gic_hw_operations gicv2_ops = {
