@@ -25,6 +25,7 @@ extern struct cpu_context cpu_context;
 int32_t domain_suspend(register_t epoint, register_t cid);
 void hyp_resume(void);
 int32_t hyp_suspend(struct cpu_context *ptr);
+void vcpu_resume(struct vcpu *v);
 
 #endif
 
