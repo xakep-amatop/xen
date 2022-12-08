@@ -323,6 +323,7 @@ void close_xs_srv(struct libxenvchan *ctrl)
 		goto fail;
 
 	xs_rm(xs, XBT_NULL, ctrl->xs_path);
+	xs_close(xs);
 
 fail:
 	free(ctrl->xs_path);
