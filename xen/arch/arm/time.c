@@ -391,7 +391,13 @@ void time_resume(void)
      * down, because the system counter is not affected by the power down (it
      * resides out of the ARM's cluster in an always-on part of the SoC).
      */
-    raise_softirq(TIMER_SOFTIRQ);
+    int cpu;
+
+    for_each_present_cpu(cpu) {
+        cpu_raise_softirq(cpu, TIMER_SOFTIRQ);
+    }
+
+    update_vcpu_system_time(current);
 }
 
 static int cpu_time_callback(struct notifier_block *nfb,
