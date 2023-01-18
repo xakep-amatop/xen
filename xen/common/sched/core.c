@@ -1007,10 +1007,6 @@ void vcpu_unblock(struct vcpu *v)
 {
     if ( !test_and_clear_bit(_VPF_blocked, &v->pause_flags) )
         return;
-#if defined(CONFIG_ARM) || defined(CONFIG_ARM64)
-    if ( test_bit(_VPF_suspended, &v->pause_flags) )
-        vcpu_resume(v);
-#endif
 
     /* Polling period ends when a VCPU is unblocked. */
     if ( unlikely(v->poll_evtchn != 0) )

@@ -69,7 +69,7 @@ static void vcpu_suspend(register_t epoint, register_t cid)
 
     v->arch.suspend_ep = epoint;
     v->arch.suspend_cid = cid;
-    set_bit(_VPF_suspended, &v->pause_flags);
+
     return;
 }
 
@@ -118,7 +118,6 @@ void vcpu_resume(struct vcpu *v)
 
     /* Initialize VCPU registers */
     arch_set_info_guest(v, &ctxt);
-    clear_bit(_VPF_suspended, &v->pause_flags);
     watchdog_domain_resume(v->domain);
 }
 
@@ -236,6 +235,7 @@ resume_nonboot_cpus:
     dsb(sy);
 
     /* Wake-up hardware domain (should always resume after Xen) */
+    vcpu_resume(hardware_domain->vcpu[0]);
     vcpu_unblock(hardware_domain->vcpu[0]);
 
     return status;
