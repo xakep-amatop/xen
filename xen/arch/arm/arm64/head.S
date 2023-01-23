@@ -609,78 +609,7 @@ ENTRY(hyp_suspend)
 
 
 ENTRY(hyp_resume)
-        msr   DAIFSet, 0xf           /* Disable all interrupts */
-
-        tlbi  alle2
-        dsb   sy                     /* Ensure completion of TLB flush */
-        isb
-
-        ldr   x0, =start
-        adr   x19, start             /* x19 := paddr (start) */
-        sub   x20, x19, x0           /* x20 := phys-offset */
-
-        mov   x22, #0                /* x22 := is_secondary_cpu */
-
-        bl    check_cpu_mode
-        bl    cpu_init
-        bl    create_page_tables
-        bl    enable_mmu
-
-        ldr   x0, =mmu_resumed      /* Explicit vaddr, not RIP-relative */
-        br    x0                    /* Get a proper vaddr into PC */
-
-mmu_resumed:
-        ldr   x4, =init_ttbr         /* VA of TTBR0_EL2 stashed by CPU 0 */
-        ldr   x4, [x4]               /* Actual value */
-        dsb   sy
-        msr   TTBR0_EL2, x4
-        dsb   sy
-        isb
-        tlbi  alle2
-        dsb   sy                     /* Ensure completion of TLB flush */
-        isb
-
-        /* Now we can access the cpu_context, so restore the context here */
-        ldr     x0, =cpu_context
-
-        /* Restore callee-saved registers */
-        ldp     x19, x20, [x0], #16
-        ldp     x21, x22, [x0], #16
-        ldp     x23, x24, [x0], #16
-        ldp     x25, x26, [x0], #16
-        ldp     x27, x28, [x0], #16
-        ldp     x29, lr, [x0], #16
-
-        /* Restore stack pointer */
-        ldr     x2, [x0], #8
-        mov     sp, x2
-
-        /* Restore system control registers */
-        ldr     x2, [x0], #8
-        msr     VBAR_EL2, x2
-        ldr     x2, [x0], #8
-        msr     VTCR_EL2, x2
-        ldr     x2, [x0], #8
-        msr     VTTBR_EL2, x2
-        ldr     x2, [x0], #8
-        msr     TPIDR_EL2, x2
-        ldr     x2, [x0], #8
-        msr     MDCR_EL2, x2
-        ldr     x2, [x0], #8
-        msr     HSTR_EL2, x2
-        ldr     x2, [x0], #8
-        msr     CPTR_EL2, x2
-        ldr     x2, [x0], #8
-        msr     HCR_EL2, x2
-        isb
-
-        /* Since context is restored return from this function will appear as
-         * return from hyp_suspend. To distinguish a return from hyp_suspend
-         * which is called upon finalizing the suspend, as opposed to return
-         * from this function which executes on resume, we need to return zero
-         * value here. */
-        mov x0, #0
-        ret
+        b .
 
 /*
  * Local variables:
