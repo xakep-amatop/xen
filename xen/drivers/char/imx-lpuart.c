@@ -100,6 +100,31 @@ static void __init imx_lpuart_init_postirq(struct serial_port *port)
     imx_lpuart_write(uart, UARTCTRL, temp);
 }
 
+static void imx_lpuart_suspend(struct serial_port *port)
+{
+    struct imx_lpuart *uart = port->uart;
+    unsigned long temp;
+
+    temp = imx_lpuart_read(uart, UARTCTRL);
+    temp &= ~( UARTCTRL_TIE | UARTCTRL_TCIE);
+    // Enable receive interrupt and idle line interupt for wakeup
+    temp |= (UARTCTRL_RIE | UARTCTRL_ILIE);
+    imx_lpuart_write(uart, UARTCTRL, temp);
+}
+
+static void imx_lpuart_resume(struct serial_port *port)
+{
+    struct imx_lpuart *uart = port->uart;
+    unsigned long temp;
+
+    temp = imx_lpuart_read(uart, UARTCTRL);
+    temp |= (UARTCTRL_RIE | UARTCTRL_TIE | UARTCTRL_ILIE);
+    imx_lpuart_write(uart, UARTCTRL, temp);
+
+    temp = imx_lpuart_read(uart, UARTSTAT);
+    imx_lpuart_write(uart, UARTSTAT, temp);
+}
+
 static int imx_lpuart_tx_ready(struct serial_port *port)
 {
     struct imx_lpuart *uart = port->uart;
