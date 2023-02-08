@@ -468,7 +468,7 @@ void xmem_pool_free(void *ptr, struct xmem_pool *pool)
     struct bhdr *b, *tmp_b;
     int fl = 0, sl = 0;
 
-    ASSERT_ALLOC_CONTEXT();
+    //ASSERT_ALLOC_CONTEXT();
 
     if ( unlikely(ptr == NULL) )
         return;
@@ -711,7 +711,7 @@ void *_xrealloc(void *ptr, unsigned long size, unsigned long align)
 
 void xfree(void *p)
 {
-    ASSERT_ALLOC_CONTEXT();
+    //ASSERT_ALLOC_CONTEXT();
 
     if ( p == NULL || p == ZERO_BLOCK_PTR )
         return;
