@@ -10,7 +10,6 @@
 #include <public/sched.h>
 
 struct cpu_context cpu_context;
-
 /* Reset values of VCPU architecture specific registers */
 static void vcpu_arch_reset(struct vcpu *v)
 {
@@ -143,23 +142,37 @@ static void xen_pt_enforce_wnx(void)
 int32_t hyp_suspend(struct cpu_context *ptr) { return 1; }
 #endif
 
+#define IMX_SIP_WAKEUP_SRC              0xc2000009
+#define IMX_SIP_WAKEUP_SRC_SCU          0x1
+#define IMX_SIP_WAKEUP_SRC_IRQSTEER     0x2
+
+
 /* Xen suspend. Note: data is not used (suspend is the suspend to RAM) */
 static long system_suspend(void *data)
 {
     int status;
     unsigned long flags;
+    struct arm_smccc_res res;
 
     BUG_ON(system_state != SYS_STATE_active);
 
     system_state = SYS_STATE_suspend;
     freeze_domains();
 
+/////////////IMX
+    printk(XENLOG_ERR "Setting wakeup source to IRQSTEER\n");
+    arm_smccc_smc(IMX_SIP_WAKEUP_SRC,
+                IMX_SIP_WAKEUP_SRC_IRQSTEER,
+                0, 0, 0, 0, 0, 0, &res);
+/////////////IMX
+    dprintk(XENLOG_ERR, "Local IRQ is %d\n", local_irq_is_enabled());
     status = disable_nonboot_cpus();
     if ( status )
     {
         system_state = SYS_STATE_resume;
         goto resume_nonboot_cpus;
     }
+    local_irq_save(flags);
 
     time_suspend();
 
@@ -170,15 +183,18 @@ static long system_suspend(void *data)
         goto resume_time;
     }
 
-    local_irq_save(flags);
     status = gic_suspend();
     if ( status )
     {
-        system_state = SYS_STATE_resume;
-        goto resume_irqs;
+        //system_state = SYS_STATE_resume;
+        //goto resume_irqs;
     }
 
     dprintk(XENLOG_DEBUG, "Suspend\n");
+    // Enable identity mapping before entering suspend to simplify
+    // the resume path.
+    update_boot_mapping(true);
+
     status = console_suspend();
     if ( status )
     {
@@ -212,6 +228,7 @@ static long system_suspend(void *data)
      * writable and executable.
      */
     xen_pt_enforce_wnx();
+    update_boot_mapping(false);
 
 resume_console:
     console_resume();
@@ -219,7 +236,7 @@ resume_console:
 
     gic_resume();
 
-resume_irqs:
+//resume_irqs:
     local_irq_restore(flags);
 
     iommu_resume();
