@@ -63,7 +63,7 @@ void call_psci_cpu_off(void)
 
 int call_psci_system_suspend(void)
 {
-#ifdef CONFIG_ARM_64
+#ifdef CONFIG_SYSTEM_SUSPEND
     struct arm_smccc_res res;
 
     /* 2nd argument (context ID) is not used */
