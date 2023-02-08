@@ -442,6 +442,7 @@ END(fail)
  * hyp_suspend, the return value is interpreted to determine whether the context
  * is saved (hyp_suspend) or restored (hyp_resume).
  */
+#ifdef CONFIG_SYSTEM_SUSPEND
 ENTRY(hyp_suspend)
         /* Store callee-saved registers */
         stp     x19, x20, [x0], #16
@@ -539,6 +540,7 @@ mmu_resumed:
          * value here. */
         mov x0, #0
         ret
+#endif
 
 #ifdef CONFIG_EARLY_PRINTK
 /*

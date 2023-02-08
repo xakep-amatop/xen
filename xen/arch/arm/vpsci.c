@@ -200,7 +200,11 @@ static void do_psci_0_2_system_reset(void)
 
 static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
 {
+#ifdef CONFIG_SYSTEM_SUSPEND
     return domain_suspend(epoint, cid);
+#else
+    return PSCI_NOT_SUPPORTED;
+#endif
 }
 
 static int32_t do_psci_1_0_features(uint32_t psci_func_id)
