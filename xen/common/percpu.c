@@ -74,8 +74,9 @@ static int cf_check cpu_percpu_callback(
     switch ( action )
     {
     case CPU_UP_PREPARE:
+      if ( system_state != SYS_STATE_resume )
         rc = init_percpu_area(cpu);
-        break;
+      break;
 
     case CPU_UP_CANCELED:
     case CPU_DEAD:
