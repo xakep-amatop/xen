@@ -94,7 +94,7 @@ static void set_init_ttbr(lpae_t *root)
 }
 
 #ifdef CONFIG_ARM_64
-int prepare_secondary_mm(int cpu)
+int finish_secondary_mm(void)
 {
     clear_boot_pagetables();
 
@@ -106,7 +106,21 @@ int prepare_secondary_mm(int cpu)
 
     return 0;
 }
+
+int prepare_secondary_mm(int cpu)
+{
+    finish_secondary_mm();
+    return 0;
+}
 #else
+void finish_secondary_mm(void)
+{
+    clear_boot_pagetables();
+
+    /* Set init_ttbr for this CPU coming up */
+    set_init_ttbr(first);
+}
+
 int prepare_secondary_mm(int cpu)
 {
     lpae_t *first;
@@ -131,11 +145,7 @@ int prepare_secondary_mm(int cpu)
         return -ENOMEM;
     }
 
-    clear_boot_pagetables();
-
-    /* Set init_ttbr for this CPU coming up */
-    set_init_ttbr(first);
-
+    finish_secondary_mm();
     return 0;
 }
 #endif

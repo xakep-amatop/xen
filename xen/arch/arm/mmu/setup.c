@@ -294,6 +294,7 @@ void __init setup_pagetables(void)
     switch_ttbr(ttbr);
 
     xen_pt_enforce_wnx();
+    finish_secondary_mm();
 
 #ifdef CONFIG_ARM_32
     per_cpu(xen_pgtable, 0) = cpu0_pgtable;

@@ -206,6 +206,7 @@ extern void *early_fdt_map(paddr_t fdt_paddr);
 extern void remove_early_mappings(void);
 /* Prepare the memory subystem to bring-up the given secondary CPU */
 extern int prepare_secondary_mm(int cpu);
+extern void finish_secondary_mm(void);
 /* Map a frame table to cover physical addresses ps through pe */
 extern void setup_frametable_mappings(paddr_t ps, paddr_t pe);
 /* map a physical range in virtual memory */
