@@ -1605,6 +1605,41 @@ void watchdog_domain_destroy(struct domain *d)
         kill_timer(&d->watchdog_timer[i].timer);
 }
 
+void watchdog_domain_suspend(struct domain *d)
+{
+    unsigned int i;
+
+    spin_lock(&d->watchdog_lock);
+
+    for ( i = 0; i < NR_DOMAIN_WATCHDOG_TIMERS; i++ )
+    {
+        if ( test_bit(i, &d->watchdog_inuse_map) )
+        {
+            stop_timer(&d->watchdog_timer[i].timer);
+        }
+    }
+
+    spin_unlock(&d->watchdog_lock);
+}
+
+void watchdog_domain_resume(struct domain *d)
+{
+    unsigned int i;
+
+    spin_lock(&d->watchdog_lock);
+
+    for ( i = 0; i < NR_DOMAIN_WATCHDOG_TIMERS; i++ )
+    {
+        if ( test_bit(i, &d->watchdog_inuse_map) )
+        {
+            set_timer(&d->watchdog_timer[i].timer,
+                      NOW() + SECONDS(d->watchdog_timer[i].timeout));
+        }
+    }
+
+    spin_unlock(&d->watchdog_lock);
+}
+
 /*
  * Pin a vcpu temporarily to a specific CPU (or restore old pinning state if
  * cpu is NR_CPUS).
