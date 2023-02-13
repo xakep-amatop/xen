@@ -60,6 +60,21 @@ void call_psci_cpu_off(void)
     }
 }
 
+int call_psci_system_suspend(register_t resume_addr)
+{
+#ifdef CONFIG_SYSTEM_SUSPEND
+    struct arm_smccc_res res;
+
+    /* 2nd argument (context ID) is not used */
+    arm_smccc_smc(PSCI_1_0_FN64_SYSTEM_SUSPEND, resume_addr, &res);
+
+    return PSCI_RET(res);
+#else
+    /* not supported */
+    return 1;
+#endif
+}
+
 void call_psci_system_off(void)
 {
     if ( psci_ver > PSCI_VERSION(0, 1) )
