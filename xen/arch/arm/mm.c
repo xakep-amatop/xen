@@ -1500,6 +1500,12 @@ int xenmem_add_to_physmap_one(
         put_page(page);
     }
 
+#if 0
+    printk(XENLOG_DEBUG "KVACH domain %hu rc %d add to physmap"" gfn=%08x mfn=%08x\n",
+             (uint16_t)(d->domain_id), rc, (uint32_t)gfn, (uint32_t)mfn);
+    //dump_p2m_lookup(d, (paddr_t)((unsigned long)gfn << 12U));
+    //dump_p2m_lookup(d, (paddr_t)((unsigned long)mfn << 12U));
+#endif
     return rc;
 }
 

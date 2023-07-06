@@ -2005,7 +2005,7 @@ static void do_trap_stage2_abort_guest(struct cpu_user_regs *regs,
 
 inject_abt:
     gdprintk(XENLOG_DEBUG,
-             "HSR=%#"PRIregister" pc=%#"PRIregister" gva=%#"PRIvaddr" gpa=%#"PRIpaddr"\n",
+             "KVACH HSR=%#"PRIregister" pc=%#"PRIregister" gva=%#"PRIvaddr" gpa=%#"PRIpaddr"\n",
              hsr.bits, regs->pc, gva, gpa);
     if ( is_data )
         inject_dabt_exception(regs, gva, hsr.len);
