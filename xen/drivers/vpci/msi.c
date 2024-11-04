@@ -206,7 +206,7 @@ static int cf_check init_msi(struct pci_dev *pdev)
         return -ENOMEM;
 
     ret = vpci_add_register(pdev->vpci, control_read, control_write,
-                            msi_control_reg(pos), 2, pdev->vpci->msi);
+                            msi_control_reg(pos), 2, pdev->vpci->msi, "MSI_CONTROL");
     if ( ret )
         /*
          * NB: there's no need to free the msi struct or remove the register
@@ -234,20 +234,20 @@ static int cf_check init_msi(struct pci_dev *pdev)
     pdev->vpci->msi->masking = is_mask_bit_support(control);
 
     ret = vpci_add_register(pdev->vpci, address_read, address_write,
-                            msi_lower_address_reg(pos), 4, pdev->vpci->msi);
+                            msi_lower_address_reg(pos), 4, pdev->vpci->msi, "MSI_LOW");
     if ( ret )
         return ret;
 
     ret = vpci_add_register(pdev->vpci, data_read, data_write,
                             msi_data_reg(pos, pdev->vpci->msi->address64), 2,
-                            pdev->vpci->msi);
+                            pdev->vpci->msi, "MSI_DATA");
     if ( ret )
         return ret;
 
     if ( pdev->vpci->msi->address64 )
     {
         ret = vpci_add_register(pdev->vpci, address_hi_read, address_hi_write,
-                                msi_upper_address_reg(pos), 4, pdev->vpci->msi);
+                                msi_upper_address_reg(pos), 4, pdev->vpci->msi, "MSI_HIGH");
         if ( ret )
             return ret;
     }
@@ -257,7 +257,7 @@ static int cf_check init_msi(struct pci_dev *pdev)
         ret = vpci_add_register(pdev->vpci, mask_read, mask_write,
                                 msi_mask_bits_reg(pos,
                                                   pdev->vpci->msi->address64),
-                                4, pdev->vpci->msi);
+                                4, pdev->vpci->msi, "MSI_MASK");
         if ( ret )
             return ret;
         /*

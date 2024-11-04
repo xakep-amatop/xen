@@ -33,6 +33,7 @@ struct vpci_register {
     uint32_t rw1c_mask;
     uint32_t rsvdp_mask;
     uint32_t rsvdz_mask;
+    const char *name;
 };
 
 #ifdef __XEN__
@@ -282,7 +283,7 @@ int vpci_add_register_mask(struct vpci *vpci, vpci_read_t *read_handler,
                            vpci_write_t *write_handler, unsigned int offset,
                            unsigned int size, void *data, uint32_t ro_mask,
                            uint32_t rw1c_mask, uint32_t rsvdp_mask,
-                           uint32_t rsvdz_mask)
+                           uint32_t rsvdz_mask, const char *name)
 {
     struct list_head *prev;
     struct vpci_register *r;
@@ -313,6 +314,7 @@ int vpci_add_register_mask(struct vpci *vpci, vpci_read_t *read_handler,
     r->rw1c_mask = rw1c_mask;
     r->rsvdp_mask = rsvdp_mask;
     r->rsvdz_mask = rsvdz_mask;
+    r->name = name;
 
     spin_lock(&vpci->lock);
 
@@ -581,6 +583,7 @@ static void vpci_write_helper(const struct pci_dev *pdev,
     data &= ~(preserved_mask | r->rsvdz_mask);
     data |= curval & preserved_mask;
 
+    printk(XENLOG_ERR "write helper r->offset = %x size = %x name %s\n", r->offset, r->size, r->name);
     r->write(pdev, r->offset, data & (0xffffffffU >> (32 - 8 * r->size)),
              r->private);
 }

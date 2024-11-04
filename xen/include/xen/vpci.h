@@ -46,15 +46,15 @@ int __must_check vpci_add_register_mask(struct vpci *vpci,
                                         unsigned int offset, unsigned int size,
                                         void *data, uint32_t ro_mask,
                                         uint32_t rw1c_mask, uint32_t rsvdp_mask,
-                                        uint32_t rsvdz_mask);
+                                        uint32_t rsvdz_mask, const char *name);
 static inline int __must_check vpci_add_register(struct vpci *vpci,
                                                  vpci_read_t *read_handler,
                                                  vpci_write_t *write_handler,
                                                  unsigned int offset,
-                                                 unsigned int size, void *data)
+                                                 unsigned int size, void *data, const char *name)
 {
     return vpci_add_register_mask(vpci, read_handler, write_handler, offset,
-                                  size, data, 0, 0, 0, 0);
+                                  size, data, 0, 0, 0, 0, name);
 }
 
 int __must_check vpci_remove_register(struct vpci *vpci, unsigned int offset,
