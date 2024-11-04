@@ -795,7 +795,7 @@ static int cf_check init_header(struct pci_dev *pdev)
                                            PCI_COMMAND_WAIT |
                                            PCI_COMMAND_SERR |
                                            PCI_COMMAND_FAST_BACK,
-                                0);
+                                0, "PCI_COMMAND");
     if ( rc )
         return rc;
 
@@ -816,7 +816,7 @@ static int cf_check init_header(struct pci_dev *pdev)
 
             rc = vpci_add_register(pdev->vpci, vpci_read_val, NULL,
                                    PCI_CAPABILITY_LIST, 1,
-                                   (void *)(uintptr_t)next);
+                                   (void *)(uintptr_t)next, "CAP_LIST");
             if ( rc )
                 return rc;
 
@@ -840,13 +840,13 @@ static int cf_check init_header(struct pci_dev *pdev)
                                              ARRAY_SIZE(supported_caps), &ttl);
 
                 rc = vpci_add_register(pdev->vpci, vpci_hw_read8, NULL,
-                                       pos + PCI_CAP_LIST_ID, 1, NULL);
+                                       pos + PCI_CAP_LIST_ID, 1, NULL, "CAP_LIST_ID");
                 if ( rc )
                     return rc;
 
                 rc = vpci_add_register(pdev->vpci, vpci_read_val, NULL,
                                        pos + PCI_CAP_LIST_NEXT, 1,
-                                       (void *)(uintptr_t)next);
+                                       (void *)(uintptr_t)next, "CAP_LIST_NEXT");
                 if ( rc )
                     return rc;
 
@@ -856,7 +856,7 @@ static int cf_check init_header(struct pci_dev *pdev)
 
         /* Extended capabilities read as zero, write ignore */
         rc = vpci_add_register(pdev->vpci, vpci_read_val, NULL, 0x100, 4,
-                               (void *)0);
+                               (void *)0, "EXT_CAP");
         if ( rc )
             return rc;
     }
@@ -868,7 +868,7 @@ static int cf_check init_header(struct pci_dev *pdev)
                                     ~(mask_cap_list ? PCI_STATUS_CAP_LIST : 0),
                                 PCI_STATUS_RW1C_MASK,
                                 mask_cap_list ? PCI_STATUS_CAP_LIST : 0,
-                                PCI_STATUS_RSVDZ_MASK);
+                                PCI_STATUS_RSVDZ_MASK, "STATUS");
     if ( rc )
         return rc;
 
@@ -906,7 +906,7 @@ static int cf_check init_header(struct pci_dev *pdev)
                                    is_hwdom ? vpci_hw_read32
                                             : guest_mem_bar_read,
                                    is_hwdom ? bar_write : guest_mem_bar_write,
-                                   reg, 4, &bars[i]);
+                                   reg, 4, &bars[i], "BAR_MEM64_HI");
             if ( rc )
                 goto fail;
 
@@ -920,7 +920,7 @@ static int cf_check init_header(struct pci_dev *pdev)
             if ( !IS_ENABLED(CONFIG_X86) && !is_hwdom )
             {
                 rc = vpci_add_register(pdev->vpci, vpci_read_val, NULL,
-                                       reg, 4, (void *)0);
+                                       reg, 4, (void *)0, "BAR_IO");
                 if ( rc )
                     goto fail;
             }
@@ -949,7 +949,7 @@ static int cf_check init_header(struct pci_dev *pdev)
             if ( !is_hwdom )
             {
                 rc = vpci_add_register(pdev->vpci, vpci_read_val, NULL,
-                                       reg, 4, (void *)0);
+                                       reg, 4, (void *)0, "BAR_EMPTY");
                 if ( rc )
                     goto fail;
             }
@@ -965,7 +965,7 @@ static int cf_check init_header(struct pci_dev *pdev)
         rc = vpci_add_register(pdev->vpci,
                                is_hwdom ? vpci_hw_read32 : guest_mem_bar_read,
                                is_hwdom ? bar_write : guest_mem_bar_write,
-                               reg, 4, &bars[i]);
+                               reg, 4, &bars[i], "BAR_MEM");
         if ( rc )
             goto fail;
     }
@@ -986,7 +986,7 @@ static int cf_check init_header(struct pci_dev *pdev)
                               PCI_ROM_ADDRESS_ENABLE;
 
         rc = vpci_add_register(pdev->vpci, vpci_hw_read32, rom_write, rom_reg,
-                               4, rom);
+                               4, rom, "ROM");
         if ( rc )
             rom->type = VPCI_BAR_EMPTY;
         else
@@ -1001,7 +1001,7 @@ static int cf_check init_header(struct pci_dev *pdev)
         /* TODO: Check expansion ROM, we do not handle ROM for guests for now */
         header->bars[num_bars].type = VPCI_BAR_EMPTY;
         rc = vpci_add_register(pdev->vpci, vpci_read_val, NULL,
-                               rom_reg, 4, (void *)0);
+                               rom_reg, 4, (void *)0, "ROM2");
         if ( rc )
             goto fail;
     }
