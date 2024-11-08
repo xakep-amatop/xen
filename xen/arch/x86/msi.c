@@ -24,6 +24,8 @@
 #include <asm/apic.h>
 #include <asm/genapic.h>
 #include <xen/msi.h>
+#include <asm/apic.h>
+#include <asm/genapic.h>
 #include <asm/io.h>
 #include <asm/io_apic.h>
 #include <asm/irq-vectors.h>
@@ -32,6 +34,7 @@
 #include <asm/fixmap.h>
 #include <asm/p2m.h>
 
+#include <io_ports.h>
 #include <public/physdev.h>
 #include <xen/iommu.h>
 #include <xsm/xsm.h>
