@@ -26,13 +26,13 @@
 #include <asm/genapic.h>
 #include <asm/io.h>
 #include <asm/io_apic.h>
+#include <asm/irq-vectors.h>
 #include <asm/smp.h>
 #include <asm/desc.h>
 #include <asm/fixmap.h>
 #include <asm/p2m.h>
 
 #include <io_ports.h>
-#include <irq_vectors.h>
 #include <public/physdev.h>
 #include <xen/iommu.h>
 #include <xsm/xsm.h>
