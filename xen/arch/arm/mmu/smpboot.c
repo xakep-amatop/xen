@@ -94,7 +94,7 @@ static void set_init_ttbr(lpae_t *root)
 }
 
 #ifdef CONFIG_ARM_64
-int finish_secondary_mm(void)
+void finish_secondary_mm(void)
 {
     clear_boot_pagetables();
 
