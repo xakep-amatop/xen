@@ -299,7 +299,7 @@ void __init setup_pagetables(void)
     per_cpu(xen_pgtable, 0) = cpu0_pgtable;
 #endif
 
-    finish_secondary_mm(0);
+    //finish_secondary_mm(0);
 }
 
 void *__init arch_vmap_virt_end(void)

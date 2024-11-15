@@ -431,6 +431,68 @@ FUNC_LOCAL(fail)
         b     1b
 END(fail)
 
+/* Load the physical address of a symbol into xb */
+.macro load_paddr xb, sym
+        ldr \xb, =\sym
+        add \xb, \xb, x20
+.endm
+
+/*
+ * Flush local TLBs
+ *
+ * See asm/arm64/flushtlb.h for the explanation of the sequence.
+ */
+.macro flush_xen_tlb_local
+        dsb   nshst
+        tlbi  alle2
+        dsb   nsh
+        isb
+.endm
+
+/*
+ * Turn on the Data Cache and the MMU. The function will return on the 1:1
+ * mapping. In other word, the caller is responsible to switch to the runtime
+ * mapping.
+ *
+ * Inputs:
+ *   x0 : Physical address of the page tables.
+ *   x1 : Extra flags of the SCTLR.
+ *
+ * Clobbers x0 - x5
+ */
+FUNC_LOCAL(enable_mmu)
+        mov   x4, x0
+        mov   x5, x1
+        PRINT_ID("- Turning on paging -\r\n")
+
+        /*
+         * The state of the TLBs is unknown before turning on the MMU.
+         * Flush them to avoid stale one.
+         */
+        flush_xen_tlb_local
+
+        /* Write Xen's PT's paddr into TTBR0_EL2 */
+        msr   TTBR0_EL2, x4
+        isb
+
+        mrs   x0, SCTLR_EL2
+        orr   x0, x0, #SCTLR_Axx_ELx_M  /* Enable MMU */
+        orr   x0, x0, #SCTLR_Axx_ELx_C  /* Enable D-cache */
+        orr   x0, x0, x5                /* Enable extra flags */
+        dsb   sy                     /* Flush PTE writes and finish reads */
+        msr   SCTLR_EL2, x0          /* now paging is enabled */
+        isb                          /* Now, flush the icache */
+
+#ifdef CONFIG_EARLY_PRINTK
+        /* Use a virtual address to access the UART. */
+        ldr   x23, =EARLY_UART_VIRTUAL_ADDRESS
+#endif
+
+        PRINT_ID("- Paging turned on -\r\n")
+
+        ret
+END(enable_mmu)
+
 /*
  * void hyp_suspend(struct cpu_context *ptr)
  *
