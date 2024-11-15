@@ -152,7 +152,7 @@ static long system_suspend(void *data)
 {
     int status;
     unsigned long flags;
-    struct arm_smccc_res res;
+   // struct arm_smccc_res res;
 
     BUG_ON(system_state != SYS_STATE_active);
 
@@ -160,10 +160,10 @@ static long system_suspend(void *data)
     freeze_domains();
 
 /////////////IMX
-    printk(XENLOG_ERR "Setting wakeup source to IRQSTEER\n");
-    arm_smccc_smc(IMX_SIP_WAKEUP_SRC,
-                IMX_SIP_WAKEUP_SRC_IRQSTEER,
-                0, 0, 0, 0, 0, 0, &res);
+  //  printk(XENLOG_ERR "Setting wakeup source to IRQSTEER\n");
+  //  arm_smccc_smc(IMX_SIP_WAKEUP_SRC,
+  //              IMX_SIP_WAKEUP_SRC_IRQSTEER,
+  //              0, 0, 0, 0, 0, 0, &res);
 /////////////IMX
     dprintk(XENLOG_ERR, "Local IRQ is %d\n", local_irq_is_enabled());
     status = disable_nonboot_cpus();
@@ -203,6 +203,8 @@ static long system_suspend(void *data)
         goto resume_console;
     }
 
+    dprintk(XENLOG_DEBUG, "Suspend 0001\n");
+
     if ( hyp_suspend(&cpu_context) )
     {
         status = call_psci_system_suspend();
@@ -220,6 +222,8 @@ static long system_suspend(void *data)
         if ( status )
             dprintk(XENLOG_ERR, "PSCI system suspend failed, err=%d\n", status);
     }
+
+    dprintk(XENLOG_DEBUG, "Suspend 0002\n");
 
     system_state = SYS_STATE_resume;
 

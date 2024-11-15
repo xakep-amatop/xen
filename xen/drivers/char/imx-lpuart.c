@@ -199,6 +199,8 @@ static void imx_lpuart_stop_tx(struct serial_port *port)
 static struct uart_driver __read_mostly imx_lpuart_driver = {
     .init_preirq = imx_lpuart_init_preirq,
     .init_postirq = imx_lpuart_init_postirq,
+    .suspend = imx_lpuart_suspend,
+    .resume = imx_lpuart_resume,
     .tx_ready = imx_lpuart_tx_ready,
     .putc = imx_lpuart_putc,
     .getc = imx_lpuart_getc,
