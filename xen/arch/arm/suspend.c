@@ -1,3 +1,4 @@
+// TODOSR add header
 #include <xen/sched.h>
 #include <xen/cpu.h>
 #include <xen/console.h>
@@ -54,15 +55,11 @@ static void vcpu_arch_reset(struct vcpu *v)
     v->arch.jmcr = 0;
 #endif
 
-    if ( is_32bit_domain(v->domain) && cpu_has_thumbee )
-    {
-        v->arch.teecr = 0;
-        v->arch.teehbr = 0;
-    }
+    v->arch.teecr = 0;
+    v->arch.teehbr = 0;
 }
 
-
-static void vcpu_suspend(register_t epoint, register_t cid)
+static void vcpu_suspend_prepare(register_t epoint, register_t cid)
 {
     struct vcpu *v = current;
 
@@ -116,7 +113,9 @@ void vcpu_resume(struct vcpu *v)
     vcpu_arch_reset(v);
 
     /* Initialize VCPU registers */
+    domain_lock(v->domain);
     arch_set_info_guest(v, &ctxt);
+    domain_unlock(v->domain);
     watchdog_domain_resume(v->domain);
 }
 
@@ -152,20 +151,12 @@ static long system_suspend(void *data)
 {
     int status;
     unsigned long flags;
-   // struct arm_smccc_res res;
 
     BUG_ON(system_state != SYS_STATE_active);
 
     system_state = SYS_STATE_suspend;
     freeze_domains();
 
-/////////////IMX
-  //  printk(XENLOG_ERR "Setting wakeup source to IRQSTEER\n");
-  //  arm_smccc_smc(IMX_SIP_WAKEUP_SRC,
-  //              IMX_SIP_WAKEUP_SRC_IRQSTEER,
-  //              0, 0, 0, 0, 0, 0, &res);
-/////////////IMX
-    dprintk(XENLOG_ERR, "Local IRQ is %d\n", local_irq_is_enabled());
     status = disable_nonboot_cpus();
     if ( status )
     {
@@ -277,6 +268,7 @@ int32_t domain_suspend(register_t epoint, register_t cid)
     if ( is_64bit_domain(d) && is_thumb )
         return PSCI_INVALID_ADDRESS;
 
+    // TODOSR care about locking here
     /* Ensure that all CPUs other than the calling one are offline */
     for_each_vcpu ( d, v )
     {
@@ -289,10 +281,10 @@ int32_t domain_suspend(register_t epoint, register_t cid)
         return PSCI_DENIED;
 
     /*
-     * Prepare the calling VCPU for suspend (reset its context, save entry point
-     * into pc and context ID into r0/x0 as specified by PSCI SYSTEM_SUSPEND)
+     * Prepare the calling VCPU for suspend (save entry point into pc and
+     * context ID into r0/x0 as specified by PSCI SYSTEM_SUSPEND)
      */
-    vcpu_suspend(epoint, cid);
+    vcpu_suspend_prepare(epoint, cid);
 
     /* Disable watchdogs of this domain */
     watchdog_domain_suspend(d);
