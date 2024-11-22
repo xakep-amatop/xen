@@ -181,6 +181,9 @@ static long system_suspend(void *data)
         //goto resume_irqs;
     }
 
+    printk("Suspend\n");
+    console_start_sync();
+
     dprintk(XENLOG_DEBUG, "Suspend\n");
     // Enable identity mapping before entering suspend to simplify
     // the resume path.
@@ -227,7 +230,7 @@ static long system_suspend(void *data)
 
 resume_console:
     console_resume();
-    dprintk(XENLOG_DEBUG, "Resume\n");
+    printk("Resume (status %d)\n", status);
 
     gic_resume();
 
