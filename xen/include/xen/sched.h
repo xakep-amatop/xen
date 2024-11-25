@@ -1109,6 +1109,15 @@ void scheduler_disable(void);
 void watchdog_domain_init(struct domain *d);
 void watchdog_domain_destroy(struct domain *d);
 
+#ifdef CONFIG_SYSTEM_SUSPEND
+/*
+ * Suspend/resume watchdogs of domain (while the domain is suspended its
+ * watchdogs should be on pause)
+ */
+void watchdog_domain_suspend(struct domain *d);
+void watchdog_domain_resume(struct domain *d);
+#endif /* CONFIG_SYSTEM_SUSPEND */
+
 /*
  * Use this check when the following are both true:
  *  - Using this feature or interface requires full access to the hardware
