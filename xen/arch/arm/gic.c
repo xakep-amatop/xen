@@ -385,6 +385,7 @@ void gic_dump_info(struct vcpu *v)
 
 void init_maintenance_interrupt(void)
 {
+    printk("maintenance_irq %d\n", gic_hw_ops->info->maintenance_irq);
     request_irq(gic_hw_ops->info->maintenance_irq, 0, maintenance_interrupt,
                 "irq-maintenance", NULL);
 }

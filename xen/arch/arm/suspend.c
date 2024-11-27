@@ -79,6 +79,7 @@ static void vcpu_resume(struct vcpu *v)
     /* Set non-zero values to the registers prior to copying */
     ctxt.user_regs.pc64 = (u64)v->arch.suspend_ep;
 
+    /* TODO: test changes on 32-bit domain */
     if ( is_32bit_domain(v->domain) )
     {
         ctxt.user_regs.r0_usr = v->arch.suspend_cid;
@@ -109,23 +110,6 @@ static void vcpu_resume(struct vcpu *v)
     arch_set_info_guest(v, &ctxt);
     domain_unlock(v->domain);
     watchdog_domain_resume(v->domain);
-}
-
-/*
- * After boot, Xen page-tables should not contain mapping that are both
- * Writable and eXecutables.
- *
- * This should be called on each CPU to enforce the policy.
- */
-static void xen_pt_enforce_wnx(void)
-{
-    WRITE_SYSREG(READ_SYSREG(SCTLR_EL2) | SCTLR_Axx_ELx_WXN, SCTLR_EL2);
-    /*
-     * The TLBs may cache SCTLR_EL2.WXN. So ensure it is synchronized
-     * before flushing the TLBs.
-     */
-    isb();
-    flush_xen_tlb_local();
 }
 
 /* Xen suspend. Note: data is not used (suspend is the suspend to RAM) */
@@ -164,13 +148,7 @@ static long system_suspend(void *data)
         goto resume_irqs;
     }
 
-    /*
-     * Enable identity mapping before entering suspend to simplify
-     * the resume path
-     */
-    update_boot_mapping(true);
-
-    printk("Suspend\n");
+    printk("Xen suspending...\n");
     console_start_sync();
 
     status = console_suspend();
@@ -213,26 +191,14 @@ static long system_suspend(void *data)
     }
 
     system_state = SYS_STATE_resume;
-
-    /*
-     * SCTLR_WXN needs to be set to configure that a mapping cannot be both
-     * writable and executable.
-     */
-    xen_pt_enforce_wnx();
     update_boot_mapping(false);
-
     iommu_resume();
-
 resume_console:
     console_resume();
-
     gic_resume();
-
 resume_irqs:
     local_irq_restore(flags);
-
     time_resume();
-
 resume_nonboot_cpus:
     /*
      * The rcu_barrier() has to be added to ensure that the per cpu area is
@@ -243,6 +209,7 @@ resume_nonboot_cpus:
     rcu_barrier();
     enable_nonboot_cpus();
     thaw_domains();
+
     system_state = SYS_STATE_active;
 
     /*
@@ -252,11 +219,15 @@ resume_nonboot_cpus:
      * i.e. after host resumes.
      */
     vcpu_resume(hardware_domain->vcpu[0]);
+
     /*
      * The resume of hardware domain should always follow Xen's resume.
      * This is done by unblocking the first vCPU of Dom0.
      */
     vcpu_unblock(hardware_domain->vcpu[0]);
+
+    hardware_domain->is_shut_down = 0;
+    hardware_domain->shutdown_code = SHUTDOWN_CODE_INVALID;
 
     printk("Resume (status %d)\n", status);
 
@@ -303,6 +274,8 @@ int32_t domain_suspend(register_t epoint, register_t cid)
     /*
      * Set the domain state to suspended (will be cleared when the domain
      * resumes, i.e. VCPU of this domain gets scheduled in).
+     *
+     * TODO: cleanup this flag/code on resume for non-hardware domain
      */
     d->is_shut_down = 1;
     d->shutdown_code = SHUTDOWN_suspend;
