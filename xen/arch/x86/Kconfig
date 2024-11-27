@@ -33,6 +33,8 @@ config X86
 	select HAS_VMAP
 	select HAS_VPCI if HVM
 	select NEEDS_LIBELF
+	select HAS_SYSTEM_SUSPEND
+	select SYSTEM_SUSPEND_ALWAYS_ON
 
 config ARCH_DEFCONFIG
 	string
