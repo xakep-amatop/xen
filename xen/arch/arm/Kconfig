@@ -475,6 +475,17 @@ config ARM64_HARDEN_BRANCH_PREDICTOR
 config ARM32_HARDEN_BRANCH_PREDICTOR
     def_bool y if ARM_32 && HARDEN_BRANCH_PREDICTOR
 
+config SYSTEM_SUSPEND
+	bool "System suspend support"
+	default y
+	depends on ARM_64
+	help
+	  This option enables the system suspend support. This is the
+	  mechanism that allows the system to be suspended to RAM and
+	  later resumed.
+
+	  If unsure, say N.
+
 source "arch/arm/platforms/Kconfig"
 
 source "common/Kconfig"
