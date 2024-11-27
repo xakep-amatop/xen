@@ -111,23 +111,6 @@ static void vcpu_resume(struct vcpu *v)
     watchdog_domain_resume(v->domain);
 }
 
-/*
- * After boot, Xen page-tables should not contain mapping that are both
- * Writable and eXecutables.
- *
- * This should be called on each CPU to enforce the policy.
- */
-static void xen_pt_enforce_wnx(void)
-{
-    WRITE_SYSREG(READ_SYSREG(SCTLR_EL2) | SCTLR_Axx_ELx_WXN, SCTLR_EL2);
-    /*
-     * The TLBs may cache SCTLR_EL2.WXN. So ensure it is synchronized
-     * before flushing the TLBs.
-     */
-    isb();
-    flush_xen_tlb_local();
-}
-
 /* Xen suspend. Note: data is not used (suspend is the suspend to RAM) */
 static long system_suspend(void *data)
 {
@@ -163,12 +146,6 @@ static long system_suspend(void *data)
         system_state = SYS_STATE_resume;
         goto resume_irqs;
     }
-
-    /*
-     * Enable identity mapping before entering suspend to simplify
-     * the resume path
-     */
-    update_boot_mapping(true);
 
     printk("Suspend\n");
     console_start_sync();
@@ -214,11 +191,6 @@ static long system_suspend(void *data)
 
     system_state = SYS_STATE_resume;
 
-    /*
-     * SCTLR_WXN needs to be set to configure that a mapping cannot be both
-     * writable and executable.
-     */
-    xen_pt_enforce_wnx();
     update_boot_mapping(false);
 
     iommu_resume();
@@ -304,8 +276,8 @@ int32_t domain_suspend(register_t epoint, register_t cid)
      * Set the domain state to suspended (will be cleared when the domain
      * resumes, i.e. VCPU of this domain gets scheduled in).
      */
-    d->is_shut_down = 1;
-    d->shutdown_code = SHUTDOWN_suspend;
+    //d->is_shut_down = 1;
+    //d->shutdown_code = SHUTDOWN_suspend;
 
     /* Disable watchdogs of this domain */
     watchdog_domain_suspend(d);

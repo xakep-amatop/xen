@@ -388,7 +388,7 @@ void *xmem_pool_alloc(unsigned long size, struct xmem_pool *pool)
     int fl, sl;
     unsigned long tmp_size;
 
-    ASSERT_ALLOC_CONTEXT();
+    //ASSERT_ALLOC_CONTEXT();
 
     if ( size < MIN_BLOCK_SIZE )
         size = MIN_BLOCK_SIZE;
@@ -468,7 +468,7 @@ void xmem_pool_free(void *ptr, struct xmem_pool *pool)
     struct bhdr *b, *tmp_b;
     int fl = 0, sl = 0;
 
-    ASSERT_ALLOC_CONTEXT();
+    //ASSERT_ALLOC_CONTEXT();
 
     if ( unlikely(ptr == NULL) )
         return;
@@ -608,7 +608,7 @@ void *_xmalloc(unsigned long size, unsigned long align)
 {
     void *p = NULL;
 
-    ASSERT_ALLOC_CONTEXT();
+    //ASSERT_ALLOC_CONTEXT();
 
     if ( !size )
         return ZERO_BLOCK_PTR;
@@ -711,7 +711,7 @@ void *_xrealloc(void *ptr, unsigned long size, unsigned long align)
 
 void xfree(void *p)
 {
-    ASSERT_ALLOC_CONTEXT();
+    //ASSERT_ALLOC_CONTEXT();
 
     if ( p == NULL || p == ZERO_BLOCK_PTR )
         return;

@@ -324,6 +324,7 @@ smp_prepare_cpus(void)
 void asmlinkage start_secondary(void)
 {
     unsigned int cpuid = init_data.cpuid;
+    //enum system_state sys_state_on_entry = system_state;
 
     memset(get_cpu_info(), 0, sizeof (struct cpu_info));
 
@@ -400,9 +401,12 @@ void asmlinkage start_secondary(void)
      * will make sure the assertion condition in alloc_xenheap_pages(),
      * i.e. !in_irq && local_irq_enabled() is satisfied.
      */
-    init_maintenance_interrupt();
-    init_timer_interrupt();
-    init_tee_secondary();
+    //if ( sys_state_on_entry != SYS_STATE_resume )
+    {
+        init_maintenance_interrupt();
+        init_timer_interrupt();
+        init_tee_secondary();
+    }
 
     local_abort_enable();
 

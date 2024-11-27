@@ -271,6 +271,33 @@ static void scif_uart_stop_tx(struct serial_port *port)
     scif_writew(uart, SCIF_SCSCR, scif_readw(uart, SCIF_SCSCR) & ~SCSCR_TIE);
 }
 
+static void scif_uart_suspend(struct serial_port *port)
+{
+    struct scif_uart *uart = port->uart;
+
+    scif_uart_stop_tx(port);
+
+    /* Wait until last bit has been transmitted. */
+    while ( !(scif_readw(uart, SCIF_SCFSR) & SCFSR_TEND) );
+
+    /* Disable TX/RX parts and all interrupts */
+    scif_writew(uart, SCIF_SCSCR, 0);
+
+    /* Reset TX/RX FIFOs */
+    scif_writew(uart, SCIF_SCFCR, SCFCR_RFRST | SCFCR_TFRST);
+}
+
+static void scif_uart_resume(struct serial_port *port)
+{
+    struct scif_uart *uart = port->uart;
+
+    //scif_uart_init_preirq(port);
+
+    /* Enable TX/RX and Error Interrupts  */
+    scif_writew(uart, SCIF_SCSCR, scif_readw(uart, SCIF_SCSCR) |
+                SCSCR_TIE | SCSCR_RIE | SCSCR_REIE);
+}
+
 static struct uart_driver __read_mostly scif_uart_driver = {
     .init_preirq  = scif_uart_init_preirq,
     .init_postirq = scif_uart_init_postirq,
@@ -281,6 +308,8 @@ static struct uart_driver __read_mostly scif_uart_driver = {
     .start_tx     = scif_uart_start_tx,
     .stop_tx      = scif_uart_stop_tx,
     .vuart_info   = scif_vuart_info,
+    .suspend      = scif_uart_suspend,
+    .resume       = scif_uart_resume,
 };
 
 static const struct dt_device_match scif_uart_dt_match[] __initconst =
