@@ -108,6 +108,7 @@ config EARLY_UART_MVEBU
 	bool
 config EARLY_UART_PL011
 	select EARLY_PRINTK
+	default y
 	bool
 config EARLY_UART_SCIF
 	select EARLY_PRINTK
@@ -115,9 +116,11 @@ config EARLY_UART_SCIF
 
 config EARLY_PRINTK
 	bool
+	default y
 
 config EARLY_UART_BASE_ADDRESS
 	depends on EARLY_PRINTK
+	default 0x9000000
 	hex "Early printk, physical base address of debug UART"
 	range 0x0 0xffffffff if ARM_32
 
