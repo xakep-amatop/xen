@@ -15,9 +15,9 @@
 #ifndef __ARM_PCI_H__
 #define __ARM_PCI_H__
 
-#ifdef CONFIG_HAS_PCI
-
 #include <xen/err.h>
+
+#ifdef CONFIG_HAS_PCI
 
 #include <asm/p2m.h>
 
