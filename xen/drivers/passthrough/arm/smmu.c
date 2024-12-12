@@ -884,7 +884,7 @@ static int arm_smmu_dt_remove_device_legacy(struct arm_smmu_device *smmu,
 	struct device_node *dev_node = dev_get_dev_node(dev);
 	int ret;
 
-	master = find_smmu_master(smmu, dev_node);
+	master = find_smmu_master(smmu, dev);
 	if (master == NULL) {
 		dev_err(dev,
 			"No registrations found for master device %s\n",
@@ -2104,7 +2104,6 @@ static int arm_smmu_add_device(struct device *dev)
 	struct arm_smmu_master_cfg *cfg;
 	struct iommu_group *group;
 	void (*releasefn)(void *data) = NULL;
-	int ret;
 
 	smmu = find_smmu_for_device(dev);
 	if (!smmu)
@@ -2113,6 +2112,7 @@ static int arm_smmu_add_device(struct device *dev)
 	/* There is no need to distinguish here, thanks to PCI-IOMMU DT bindings */
 #if 0
 	if (dev_is_pci(dev)) {
+		int ret;
 		struct pci_dev *pdev = to_pci_dev(dev);
 		struct iommu_fwspec *fwspec;
 

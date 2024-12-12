@@ -24,8 +24,8 @@ static const struct pci_dev *get_physfn_pdev(const struct pci_dev *pdev)
     if ( !pdev->info.is_virtfn )
         return NULL;
 
-    return pci_get_pdev(/*seg*/0, pdev->info.physfn.bus,
-                        pdev->info.physfn.devfn);
+    return pci_get_pdev(NULL, PCI_SBDF(/*seg*/0, pdev->info.physfn.bus,
+                        pdev->info.physfn.devfn));
 }
 
 static uint32_t guest_vendor_id_read(const struct pci_dev *pdev,
@@ -63,9 +63,7 @@ static uint32_t guest_get_vf_ven_dev_id(const struct pci_dev *pdev)
     /* Vendor ID is the same as the PF's Venodr ID. */
     dev_ven_id = pci_conf_read16(physfn_pdev->sbdf, PCI_VENDOR_ID);
     /* Device ID comes from the SR-IOV extended capability. */
-    pos = pci_find_ext_capability(physfn_pdev->sbdf.seg,
-                                  physfn_pdev->sbdf.bus,
-                                  physfn_pdev->sbdf.devfn,
+    pos = pci_find_ext_capability(physfn_pdev->sbdf,
                                   PCI_EXT_CAP_ID_SRIOV);
     if ( !pos )
     {
@@ -82,8 +80,7 @@ static unsigned int get_sriov_pf_pos(const struct pci_dev *pdev)
     if ( pdev->info.is_virtfn )
         return 0;
 
-    return pci_find_ext_capability(pdev->seg, pdev->bus, pdev->devfn,
-                                   PCI_EXT_CAP_ID_SRIOV);
+    return pci_find_ext_capability(pdev->sbdf, PCI_EXT_CAP_ID_SRIOV);
 }
 
 /*
@@ -108,8 +105,8 @@ static int vf_init_bars(struct pci_dev *pdev)
         unsigned int idx = vf_pos + PCI_SRIOV_BAR + i * 4;
         uint32_t bar;
 
-        /* FIXME: pdev->vf_rlen already has the size of the BAR after sizing. */
-        bars[i].size = pdev->vf_rlen[i];
+        /* FIXME: pdev->physfn.vf_rlen already has the size of the BAR after sizing. */
+        bars[i].size = pdev->physfn.vf_rlen[i];
         bars[i].type = VPCI_BAR_EMPTY;
 
         if ( i && bars[i - 1].type == VPCI_BAR_MEM64_LO )

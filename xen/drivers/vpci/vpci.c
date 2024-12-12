@@ -136,19 +136,19 @@ bool vpci_translate_virtual_device(struct domain *d, pci_sbdf_t *sbdf)
 
     ASSERT(!is_hardware_domain(d));
 
-    pcidevs_read_lock();
+    read_lock(&d->pci_lock);
     for_each_pdev( d, pdev )
     {
         if ( pdev->vpci && (pdev->vpci->guest_sbdf.sbdf == sbdf->sbdf) )
         {
             /* Replace guest SBDF with the physical one. */
             *sbdf = pdev->sbdf;
-            pcidevs_read_unlock();
+            read_unlock(&d->pci_lock);
             return true;
         }
     }
 
-    pcidevs_read_unlock();
+    read_unlock(&d->pci_lock);
     return false;
 }
 

@@ -259,8 +259,7 @@ static inline paddr_t vmsix_table_addr(const struct vpci *vpci, unsigned int nr)
 static inline paddr_t vmsix_guest_table_base(const struct vpci *vpci,
                                              unsigned int nr)
 {
-    return (vpci->header.bars[vpci->msix->tables[nr] &
-           PCI_MSIX_BIRMASK].guest_reg & PCI_BASE_ADDRESS_MEM_MASK);
+    return vmsix_table_base(vpci, nr) & PCI_BASE_ADDRESS_MEM_MASK;
 }
 
 static inline paddr_t vmsix_guest_table_addr(const struct vpci *vpci,
@@ -301,7 +300,7 @@ void register_msix_mmio_handler(struct domain *d);
 
 void vpci_msix_add_to_msix_table(struct vpci_msix *msix, struct domain *d);
 
-int msix_write(const struct domain *d, struct vpci_msix *msix,
+int msix_write(struct domain *d, struct vpci_msix *msix,
                unsigned long addr, unsigned int len, unsigned long data);
 
 int msix_read(struct vpci_msix *msix, unsigned long addr, unsigned int len,

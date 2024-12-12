@@ -1437,7 +1437,7 @@ static struct gen4_pci_ipmmu_info *get_gen4_pci_ipmmu_info(struct device *dev)
 {
     struct dt_device_node *np;
 
-    np = pci_find_host_bridge_node(dev);
+    np = pci_find_host_bridge_node(dev_to_pci(dev));
     if ( !np )
         return NULL;
 

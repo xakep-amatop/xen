@@ -312,7 +312,7 @@ int iommu_add_pci_device(uint8_t devfn, struct pci_dev *pdev)
     if ( dev_iommu_fwspec_get(dev) )
         return -EEXIST;
 
-    np = pci_find_host_bridge_node(dev);
+    np = pci_find_host_bridge_node(pdev);
     if ( !np )
         return -ENODEV;
 
@@ -320,7 +320,7 @@ int iommu_add_pci_device(uint8_t devfn, struct pci_dev *pdev)
      * According to the Documentation/devicetree/bindings/pci/pci-iommu.txt
      * from Linux.
      */
-    rc = dt_map_id(np, PCI_BDF2(pdev->bus, devfn), "iommu-map",
+    rc = dt_map_id(np, PCI_BDF(pdev->bus, devfn), "iommu-map",
                    "iommu-map-mask", &iommu_spec.np, iommu_spec.args);
     if ( rc )
         return rc == -ENODEV ? NO_IOMMU : rc;

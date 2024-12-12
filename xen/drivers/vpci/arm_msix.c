@@ -54,7 +54,7 @@ static int arm_msix_read(struct vcpu *v, mmio_info_t *info,
 static int arm_msix_write(struct vcpu *v, mmio_info_t *info,
                           register_t data, void *priv)
 {
-    const struct domain *d = v->domain;
+    struct domain *d = v->domain;
     struct vpci *vpci = (struct vpci *)priv;
     struct vpci_msix *msix = vpci->msix;
     unsigned int len = 1U << info->dabt.size;

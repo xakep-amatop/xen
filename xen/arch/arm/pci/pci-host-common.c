@@ -338,7 +338,7 @@ err_exit:
 /*
  * Get host bridge node given a device attached to it.
  */
-const struct dt_device_node *
+struct dt_device_node *
 pci_find_host_bridge_node(const struct pci_dev *pdev)
 {
     struct pci_host_bridge *bridge;

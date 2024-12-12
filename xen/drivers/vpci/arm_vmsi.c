@@ -29,7 +29,7 @@ void vpci_msi_arch_disable(struct vpci_msi *msi,
                            const struct pci_dev *pdev) { }
 void vpci_msix_arch_init_entry(struct vpci_msix_entry *entry) {}
 void vpci_msi_arch_update(struct vpci_msi *msi, const struct pci_dev *pdev) {}
-int vpci_msix_arch_print(const struct domain *d, const struct vpci_msix *msix)
+int vpci_msix_arch_print(const struct vpci_msix *msix)
 {
     return 0;
 }
@@ -57,7 +57,7 @@ int vpci_msi_arch_enable(struct vpci_msi *msi, const struct pci_dev *pdev,
     u64 msi_base = 0;
     int ret;
     uint8_t slot = PCI_SLOT(pdev->devfn), func = PCI_FUNC(pdev->devfn);
-    unsigned int pos = pci_find_cap_offset(pdev->seg, pdev->bus, slot, func,
+    unsigned int pos = pci_find_cap_offset(PCI_SBDF(pdev->seg, pdev->bus, slot, func),
                                            PCI_CAP_ID_MSI);
 
     if ( msi->address )
@@ -89,7 +89,7 @@ void vpci_msi_arch_mask(struct vpci_msi *msi, const struct pci_dev *pdev,
                         unsigned int entry, bool mask)
 {
     uint8_t slot = PCI_SLOT(pdev->devfn), func = PCI_FUNC(pdev->devfn);
-    unsigned int pos = pci_find_cap_offset(pdev->seg, pdev->bus, slot, func,
+    unsigned int pos = pci_find_cap_offset(PCI_SBDF(pdev->seg, pdev->bus, slot, func),
                                            PCI_CAP_ID_MSI);
 
     pci_conf_write32(pdev->sbdf, msi->mask,
