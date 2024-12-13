@@ -139,6 +139,8 @@ static long system_suspend(void *data)
     system_state = SYS_STATE_suspend;
     freeze_domains();
 
+    printk("%s:%d\n", __func__, __LINE__);
+
     /*
      * Non-boot CPUs have to be disabled on suspend and enabled on resume
      * (hotplug-based mechanism). Disabling non-boot CPUs will lead to PSCI
@@ -148,13 +150,17 @@ static long system_suspend(void *data)
      * each non-boot CPU).
      */
     status = disable_nonboot_cpus();
+    printk("%s:%d\n", __func__, __LINE__);
     if ( status )
     {
         system_state = SYS_STATE_resume;
         goto resume_nonboot_cpus;
     }
 
+    printk("%s:%d\n", __func__, __LINE__);
     time_suspend();
+
+    printk("%s:%d\n", __func__, __LINE__);
 
     local_irq_save(flags);
     status = gic_suspend();
@@ -163,6 +169,8 @@ static long system_suspend(void *data)
         system_state = SYS_STATE_resume;
         goto resume_irqs;
     }
+
+    printk("%s:%d\n", __func__, __LINE__);
 
     /*
      * Enable identity mapping before entering suspend to simplify

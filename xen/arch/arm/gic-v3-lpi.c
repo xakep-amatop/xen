@@ -228,8 +228,10 @@ static int gicv3_lpi_allocate_pendtable(unsigned int cpu)
 {
     void *pendtable;
 
-    if ( per_cpu(lpi_redist, cpu).pending_table )
+    if ( per_cpu(lpi_redist, cpu).pending_table ) {
+        printk("%s:%d\n", __func__, __LINE__);
         return -EBUSY;
+    }
 
     /*
      * The pending table holds one bit per LPI and even covers bits for
@@ -239,12 +241,15 @@ static int gicv3_lpi_allocate_pendtable(unsigned int cpu)
      */
     pendtable = _xmalloc_whole_pages(lpi_data.max_host_lpi_ids / 8, SZ_64K,
                                      gicv3_its_get_memflags());
-    if ( !pendtable )
+    if ( !pendtable ) {
+        printk("%s:%d\n", __func__, __LINE__);
         return -ENOMEM;
+    }
 
     /* Make sure the physical address can be encoded in the register. */
     if ( virt_to_maddr(pendtable) & ~GENMASK(51, 16) )
     {
+        printk("%s:%d\n", __func__, __LINE__);
         xfree(pendtable);
         return -ERANGE;
     }
@@ -386,6 +391,7 @@ static int cpu_callback(struct notifier_block *nfb, unsigned long action,
     switch ( action )
     {
     case CPU_UP_PREPARE:
+        printk("%s:%d\n", __func__, __LINE__);
         rc = gicv3_lpi_allocate_pendtable(cpu);
         if ( rc )
             printk(XENLOG_ERR "Unable to allocate the pendtable for CPU%lu\n",
