@@ -63,6 +63,7 @@ config DEFCONFIG_LIST
 
 config EXPERT
 	bool "Configure EXPERT features"
+	default y
 	help
 	  This option allows certain base Xen options and settings
 	  to be disabled or tweaked. This is for specialized environments

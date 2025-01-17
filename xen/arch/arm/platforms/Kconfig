@@ -24,6 +24,7 @@ config QEMU
 config RCAR3
 	bool "Renesas RCar3 support"
 	depends on ARM_64
+	default y
 	select HAS_SCIF
 	select IPMMU_VMSA
 	help

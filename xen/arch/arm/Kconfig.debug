@@ -76,6 +76,7 @@ choice
 			output to a PL011 UART.
 
 	config EARLY_UART_CHOICE_SCIF
+		default y
 		select EARLY_UART_SCIF
 		bool "Early printk via SCIF UART"
 		help
@@ -118,6 +119,7 @@ config EARLY_PRINTK
 
 config EARLY_UART_BASE_ADDRESS
 	depends on EARLY_PRINTK
+	default 0xe6e88000
 	hex "Early printk, physical base address of debug UART"
 	range 0x0 0xffffffff if ARM_32
 

@@ -306,6 +306,25 @@ FUNC_LOCAL(enable_mmu)
         ret
 END(enable_mmu)
 
+#ifdef CONFIG_EARLY_PRINTK
+/*
+ * Initialize the UART. Should only be called on the boot CPU.
+ *
+ * Output:
+ *  x23: Early UART base physical address
+ *
+ * Clobbers x0 - x1
+ */
+FUNC_LOCAL(init_uart)
+        ldr   x23, =CONFIG_EARLY_UART_BASE_ADDRESS
+#ifdef CONFIG_EARLY_UART_INIT
+        early_uart_init x23, 0
+#endif
+        PRINT("- UART enabled -\r\n")
+        ret
+END(init_uart)
+#endif
+
 #ifdef CONFIG_SYSTEM_SUSPEND
 
 /*
@@ -369,7 +388,7 @@ ENTRY(hyp_resume)
 #ifdef CONFIG_EARLY_PRINTK
         bl    init_uart
 #endif
-        PRINT("- Xen resuming -")
+        PRINT_ID("- Xen resuming -")
 
         bl    check_cpu_mode
         bl    cpu_init
@@ -378,6 +397,7 @@ ENTRY(hyp_resume)
         b     enable_boot_cpu_mm
 
 mmu_resumed:
+        PRINT("hyp_resume 0001\r\n")
         /* Now we can access the cpu_context, so restore the context here */
         ldr     x0, =cpu_context
 
@@ -472,6 +492,7 @@ FUNC(enable_boot_cpu_mm)
         ldr   x0, =1f
         br    x0
 1:
+        PRINT("enable_boot_cpu_mm 0001\r\n")
         mov   lr, x6
         /*
          * The 1:1 map may clash with other parts of the Xen virtual memory

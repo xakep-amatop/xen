@@ -164,16 +164,10 @@ static long system_suspend(void *data)
         goto resume_irqs;
     }
 
-    /*
-     * Enable identity mapping before entering suspend to simplify
-     * the resume path
-     */
-    update_boot_mapping(true);
-
     printk("Suspend\n");
     console_start_sync();
 
-    status = console_suspend();
+    //status = console_suspend();
     if ( status )
     {
         dprintk(XENLOG_ERR, "Failed to suspend the console, err=%d\n", status);
@@ -187,12 +181,6 @@ static long system_suspend(void *data)
         system_state = SYS_STATE_resume;
         goto resume_console;
     }
-
-    /*
-     * Enable identity mapping before entering suspend to simplify
-     * the resume path
-     */
-    update_boot_mapping(true);
 
     if ( hyp_suspend(&cpu_context) )
     {
@@ -219,12 +207,13 @@ static long system_suspend(void *data)
      * writable and executable.
      */
     xen_pt_enforce_wnx();
-    update_boot_mapping(false);
 
     iommu_resume();
 
 resume_console:
     console_resume();
+
+    printk("CONSOLE RESUMED\n");
 
     gic_resume();
 

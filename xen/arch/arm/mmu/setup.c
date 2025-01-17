@@ -469,7 +469,7 @@ void __init setup_pagetables(void)
     xen_pt_enforce_wnx();
 
 #ifdef CONFIG_SYSTEM_SUSPEND
-    //prepare_secondary_mm();
+    //prepare_secondary_mm(0);
 #endif
 }
 
