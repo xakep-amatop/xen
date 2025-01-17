@@ -365,27 +365,19 @@ ENTRY(hyp_resume)
         adr   x19, start             /* x19 := paddr (start) */
         sub   x20, x19, x0           /* x20 := phys-offset */
 
-        mov   x22, #0                /* x22 := is_secondary_cpu */
+        /* Initialize the UART if earlyprintk has been enabled. */
+#ifdef CONFIG_EARLY_PRINTK
+        bl    init_uart
+#endif
+        PRINT("- Xen resuming -")
 
         bl    check_cpu_mode
         bl    cpu_init
-        bl    create_page_tables
-        bl    enable_mmu
 
-        ldr   x0, =mmu_resumed      /* Explicit vaddr, not RIP-relative */
-        br    x0                    /* Get a proper vaddr into PC */
+        ldr   lr, =mmu_resumed
+        b     enable_boot_cpu_mm
 
 mmu_resumed:
-        ldr   x4, =init_ttbr         /* VA of TTBR0_EL2 stashed by CPU 0 */
-        ldr   x4, [x4]               /* Actual value */
-        dsb   sy
-        msr   TTBR0_EL2, x4
-        dsb   sy
-        isb
-        tlbi  alle2
-        dsb   sy                     /* Ensure completion of TLB flush */
-        isb
-
         /* Now we can access the cpu_context, so restore the context here */
         ldr     x0, =cpu_context
 
