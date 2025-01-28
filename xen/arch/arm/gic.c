@@ -436,8 +436,18 @@ int gic_suspend(void)
     return gic_hw_ops->suspend();
 }
 
+void hyp_resume_print(unsigned long long point);
+
 void gic_resume(void)
 {
+    hyp_resume_print(0x500);
+    hyp_resume_print(!local_irq_is_enabled());
+    hyp_resume_print(smp_processor_id());
+    hyp_resume_print((unsigned long long)gic_hw_ops);
+    hyp_resume_print((unsigned long long)gic_hw_ops->resume);
+
+    isb();
+
     /*
      * Must be called by boot CPU#0 with interrupts disabled after gic_suspend
      * has returned successfully.

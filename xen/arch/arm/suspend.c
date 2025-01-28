@@ -11,6 +11,8 @@
 #include <asm/platform.h>
 #include <public/sched.h>
 
+void early_puts(const char *s, size_t nr);
+
 struct cpu_context cpu_context;
 
 /* Reset values of VCPU architecture specific registers */
@@ -117,7 +119,7 @@ static void vcpu_resume(struct vcpu *v)
  *
  * This should be called on each CPU to enforce the policy.
  */
-static void xen_pt_enforce_wnx(void)
+static void __maybe_unused xen_pt_enforce_wnx(void)
 {
     WRITE_SYSREG(READ_SYSREG(SCTLR_EL2) | SCTLR_Axx_ELx_WXN, SCTLR_EL2);
     /*
@@ -167,7 +169,9 @@ static long system_suspend(void *data)
     printk("Suspend\n");
     console_start_sync();
 
-    //status = console_suspend();
+    update_boot_mapping(true);
+
+    status = console_suspend();
     if ( status )
     {
         dprintk(XENLOG_ERR, "Failed to suspend the console, err=%d\n", status);
@@ -185,6 +189,7 @@ static long system_suspend(void *data)
     if ( hyp_suspend(&cpu_context) )
     {
         status = call_psci_system_suspend();
+
         /*
          * If suspend is finalized properly by above system suspend PSCI call,
          * the code below in this 'if' branch will never execute. Execution
@@ -208,19 +213,31 @@ static long system_suspend(void *data)
      */
     xen_pt_enforce_wnx();
 
+    update_boot_mapping(false);
+
     iommu_resume();
+    hyp_resume_print(0x6);
 
 resume_console:
     console_resume();
 
-    printk("CONSOLE RESUMED\n");
+    hyp_resume_print(0x16);
 
     gic_resume();
+    hyp_resume_print(7);
 
 resume_irqs:
     local_irq_restore(flags);
 
+    hyp_resume_print(8);
+
     time_resume();
+
+    hyp_resume_print(9);
+
+    printk("CONSOLE RESUMED\n");
+
+    hyp_resume_print(10);
 
 resume_nonboot_cpus:
     /*
@@ -230,10 +247,20 @@ resume_nonboot_cpus:
      * when non-boot CPUs are hot-unplugged on suspend and hotplugged on resume.
      */
     rcu_barrier();
+
+    hyp_resume_print(11);
+
+    printk("RES 0002\r\n");
+
+    hyp_resume_print(12);
+
     enable_nonboot_cpus();
+    hyp_resume_print(13);
     thaw_domains();
+    hyp_resume_print(14);
     system_state = SYS_STATE_active;
 
+    hyp_resume_print(15);
     /*
      * The hardware domain owns most of the devices and may be part of the
      * suspend/resume path. Since the hardware domain suspend is tied to
@@ -241,13 +268,16 @@ resume_nonboot_cpus:
      * i.e. after host resumes.
      */
     vcpu_resume(hardware_domain->vcpu[0]);
+    hyp_resume_print(16);
     /*
      * The resume of hardware domain should always follow Xen's resume.
      * This is done by unblocking the first vCPU of Dom0.
      */
     vcpu_unblock(hardware_domain->vcpu[0]);
+    hyp_resume_print(17);
 
     printk("Resume (status %d)\n", status);
+    hyp_resume_print(18);
 
     return status;
 }

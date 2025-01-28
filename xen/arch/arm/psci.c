@@ -61,6 +61,8 @@ void call_psci_cpu_off(void)
     }
 }
 
+extern void real_start(void);
+
 int call_psci_system_suspend(void)
 {
 #ifdef CONFIG_SYSTEM_SUSPEND

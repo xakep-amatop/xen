@@ -26,6 +26,7 @@ extern struct cpu_context cpu_context;
 
 int32_t domain_suspend(register_t epoint, register_t cid);
 void hyp_resume(void);
+void hyp_resume_print(unsigned long long point);
 int32_t hyp_suspend(struct cpu_context *ptr);
 
 #endif

@@ -1151,12 +1151,18 @@ static int gicv2_suspend(void)
     return 0;
 }
 
+void hyp_resume_print(unsigned long long point);
+
 static void gicv2_resume(void)
 {
     unsigned int i;
 
+    hyp_resume_print(0x200);
+
     if ( !gicv2_context.gicd_isenabler )
         return;
+
+    hyp_resume_print(0x201);
 
     /* Disable CPU interface and distributor */
     writel_gicc(0, GICC_CTLR);

@@ -350,6 +350,8 @@ static void __init create_llc_coloring_mappings(void)
     }
 }
 
+void set_init_ttbr(lpae_t *root);
+
 /*
  * Boot-time pagetable setup.
  * Changes here may need matching changes in head.S
@@ -467,10 +469,6 @@ void __init setup_pagetables(void)
     flush_xen_tlb_local();
 
     xen_pt_enforce_wnx();
-
-#ifdef CONFIG_SYSTEM_SUSPEND
-    //prepare_secondary_mm(0);
-#endif
 }
 
 void *__init arch_vmap_virt_end(void)

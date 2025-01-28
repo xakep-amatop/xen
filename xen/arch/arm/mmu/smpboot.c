@@ -72,7 +72,7 @@ static void clear_boot_pagetables(void)
     clear_table(boot_third);
 }
 
-static void set_init_ttbr(lpae_t *root)
+void set_init_ttbr(lpae_t *root)
 {
     /*
      * init_ttbr is part of the identity mapping which is read-only. So
@@ -80,9 +80,20 @@ static void set_init_ttbr(lpae_t *root)
      */
     void *ptr = map_domain_page(virt_to_mfn(&init_ttbr));
 
+
     ptr += PAGE_OFFSET(&init_ttbr);
 
+
+    printk("#############################\n");
+    printk("init_ttbr 0000 %lx\n", init_ttbr);
+    printk("#############################\n");
+
+
     *(uint64_t *)ptr = virt_to_maddr(root);
+
+    printk("#############################\n");
+    printk("init_ttbr 0001 %lx\n", init_ttbr);
+    printk("#############################\n");
 
     /*
      * init_ttbr will be accessed with the MMU off, so ensure the update

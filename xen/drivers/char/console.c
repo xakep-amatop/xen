@@ -1321,10 +1321,15 @@ int console_suspend(void)
     return 0;
 }
 
+void hyp_resume_print(unsigned long long point);
+
 int console_resume(void)
 {
+    hyp_resume_print(0x300);
     serial_resume();
+    hyp_resume_print(0x301);
     console_giveback(suspend_steal_id);
+    hyp_resume_print(0x302);
     return 0;
 }
 

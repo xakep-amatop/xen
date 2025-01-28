@@ -284,23 +284,59 @@ FUNC_LOCAL(enable_mmu)
          */
         flush_xen_tlb_local
 
+#ifdef CONFIG_EARLY_PRINTK
+        /* Use a virtual address to access the UART. */
+        ldr   x23, =CONFIG_EARLY_UART_BASE_ADDRESS
+#endif
+        PRINT_ID("- Paging turned on 0000 -\r\n")
+
         /* Write Xen's PT's paddr into TTBR0_EL2 */
         msr   TTBR0_EL2, x4
         isb
 
-        mrs   x0, SCTLR_EL2
-        orr   x0, x0, #SCTLR_Axx_ELx_M  /* Enable MMU */
-        orr   x0, x0, #SCTLR_Axx_ELx_C  /* Enable D-cache */
-        orr   x0, x0, x5                /* Enable extra flags */
+#ifdef CONFIG_EARLY_PRINTK
+        /* Use a virtual address to access the UART. */
+        ldr   x23, =CONFIG_EARLY_UART_BASE_ADDRESS
+#endif
+        PRINT_ID("- Paging turned on 0001 -\r\n")
+
+        mrs   x4, SCTLR_EL2
+#ifdef CONFIG_EARLY_PRINTK
+        /* Use a virtual address to access the UART. */
+        ldr   x23, =CONFIG_EARLY_UART_BASE_ADDRESS
+#endif
+        PRINT_ID("- Paging turned on 0002 -\r\n")
+        orr   x4, x4, #SCTLR_Axx_ELx_M  /* Enable MMU */
+#ifdef CONFIG_EARLY_PRINTK
+        /* Use a virtual address to access the UART. */
+        ldr   x23, =CONFIG_EARLY_UART_BASE_ADDRESS
+#endif
+        PRINT_ID("- Paging turned on 0003 -\r\n")
+        orr   x4, x4, #SCTLR_Axx_ELx_C  /* Enable D-cache */
+#ifdef CONFIG_EARLY_PRINTK
+        /* Use a virtual address to access the UART. */
+        ldr   x23, =CONFIG_EARLY_UART_BASE_ADDRESS
+#endif
+        PRINT_ID("- Paging turned on 0004 -\r\n")
+        orr   x4, x4, x5                /* Enable extra flags */
+#ifdef CONFIG_EARLY_PRINTK
+        /* Use a virtual address to access the UART. */
+        ldr   x23, =CONFIG_EARLY_UART_BASE_ADDRESS
+#endif
+        PRINT_ID("- Paging turned on 0005 -\r\n")
         dsb   sy                     /* Flush PTE writes and finish reads */
-        msr   SCTLR_EL2, x0          /* now paging is enabled */
+        msr   SCTLR_EL2, x4          /* now paging is enabled */
         isb                          /* Now, flush the icache */
+#ifdef CONFIG_EARLY_PRINTK
+        /* Use a virtual address to access the UART. */
+        ldr   x23, =EARLY_UART_VIRTUAL_ADDRESS
+#endif
+        PRINT_ID("- Paging turned on 0006 -\r\n")
 
 #ifdef CONFIG_EARLY_PRINTK
         /* Use a virtual address to access the UART. */
         ldr   x23, =EARLY_UART_VIRTUAL_ADDRESS
 #endif
-
         PRINT_ID("- Paging turned on -\r\n")
 
         ret
@@ -320,7 +356,6 @@ FUNC_LOCAL(init_uart)
 #ifdef CONFIG_EARLY_UART_INIT
         early_uart_init x23, 0
 #endif
-        PRINT("- UART enabled -\r\n")
         ret
 END(init_uart)
 #endif
@@ -388,17 +423,53 @@ ENTRY(hyp_resume)
 #ifdef CONFIG_EARLY_PRINTK
         bl    init_uart
 #endif
-        PRINT_ID("- Xen resuming -")
+        PRINT_ID("- Xen resuming -\r\n")
+
+        mov x4, lr
+        PRINT_ID("The LR/0 register value is: ")
+        print_reg x4
+        PRINT_ID("\r\n")
 
         bl    check_cpu_mode
         bl    cpu_init
 
-        ldr   lr, =mmu_resumed
-        b     enable_boot_cpu_mm
+        PRINT_ID("- Xen resuming 0000 -\r\n")
+
+        //bl    create_page_tables
+        //load_paddr x0, boot_pgtable
+
+        load_paddr x0, init_ttbr
+        ldr x0, [x0]
+        mov   x1, #0
+        bl    enable_mmu
+
+#ifdef CONFIG_EARLY_PRINTK
+        isb
+        /* Use a virtual address to access the UART. */
+        ldr   x23, =EARLY_UART_VIRTUAL_ADDRESS
+#endif
+        PRINT_ID("- Xen resuming 1001 -\r\n")
+        isb
+
+        ldr   x0, =mmu_resumed      /* Explicit vaddr, not RIP-relative */
+        br    x0                    /* Get a proper vaddr into PC */
 
 mmu_resumed:
-        PRINT("hyp_resume 0001\r\n")
+        mov x4, x0
+        mov x5, x2
+        PRINT_ID("hyp_resume 0002\r\n")
+        mov x0, x4
+        mov x2, x5
+
         /* Now we can access the cpu_context, so restore the context here */
+        ldr     x0, =cpu_context
+
+        mov x4, x0
+        mov x5, x2
+        PRINT("hyp_resume 1002\r\n")
+        mov x0, x4
+        mov x2, x5
+
         ldr     x0, =cpu_context
 
         /* Restore callee-saved registers */
@@ -432,12 +503,41 @@ mmu_resumed:
         msr     HCR_EL2, x2
         isb
 
+        mov x4, x23
+#ifdef CONFIG_EARLY_PRINTK
+        /* Use a virtual address to access the UART. */
+        ldr   x23, =EARLY_UART_VIRTUAL_ADDRESS
+#endif
+        PRINT_ID("hyp_resume 0004\r\n")
+
+        mov x5, lr
+        PRINT_ID("The LR/1 register value is: ")
+        print_reg x5
+        PRINT_ID("\r\n")
+        mov x23, x4
+
         /* Since context is restored return from this function will appear as
          * return from hyp_suspend. To distinguish a return from hyp_suspend
          * which is called upon finalizing the suspend, as opposed to return
          * from this function which executes on resume, we need to return zero
          * value here. */
         mov x0, #0
+        ret
+
+ENTRY(hyp_resume_print)
+        mov x4, x0
+#ifdef CONFIG_EARLY_PRINTK
+        /* Use a virtual address to access the UART. */
+        ldr   x23, =EARLY_UART_VIRTUAL_ADDRESS
+#endif
+        // PRINT_ID("RESUME TEST POINT ")
+        // print_reg x4
+        // PRINT_ID("\r\n")
+
+        PRINT("RESUME TEST POINT ")
+        print_reg x4
+        PRINT("\r\n")
+
         ret
 
 #endif /* CONFIG_SYSTEM_SUSPEND */

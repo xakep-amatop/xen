@@ -295,6 +295,7 @@ void __init init_pdx(void)
 }
 
 size_t __read_mostly dcache_line_bytes;
+void set_init_ttbr(lpae_t *root);
 
 /* C entry point for boot CPU */
 void asmlinkage __init start_xen(unsigned long fdt_paddr)
@@ -506,6 +507,10 @@ void asmlinkage __init start_xen(unsigned long fdt_paddr)
 
     for_each_domain( d )
         domain_unpause_by_systemcontroller(d);
+
+#ifdef CONFIG_SYSTEM_SUSPEND
+    set_init_ttbr(xen_pgtable);
+#endif
 
     /* Switch on to the dynamically allocated stack for the idle vcpu
      * since the static one we're running on is about to be freed. */

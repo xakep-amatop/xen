@@ -224,7 +224,7 @@ section_table:
         .align  5
 #endif /* CONFIG_ARM_EFI */
 
-FUNC_LOCAL(real_start)
+FUNC(real_start)
         /* BSS should be zeroed when booting without EFI */
         mov   x26, #0                /* x26 := skip_zero_bss */
 
@@ -258,7 +258,7 @@ real_start_efi:
 
 primary_switched:
         bl    zero_bss
-        PRINT("- Ready -\r\n")
+        PRINT("- Ready 0001 -\r\n")
         /* Setup the arguments for start_xen and jump to C world */
         mov   x0, x21                /* x0 := paddr(FDT) */
         ldr   x1, =start_xen
@@ -300,7 +300,7 @@ FUNC(init_secondary)
         b     enable_secondary_cpu_mm
 
 secondary_switched:
-        PRINT("- Ready -\r\n")
+        PRINT("- Ready 0002 -\r\n")
         /* Jump to C world */
         ldr   x1, =start_secondary
         b     launch
@@ -440,7 +440,7 @@ END(fail)
  *
  * Clobbers x0 - x1
  */
-FUNC_LOCAL(init_uart)
+FUNC(init_uart)
         ldr   x23, =CONFIG_EARLY_UART_BASE_ADDRESS
 #ifdef CONFIG_EARLY_UART_INIT
         early_uart_init x23, 0
