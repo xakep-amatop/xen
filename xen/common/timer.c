@@ -666,7 +666,8 @@ static int cf_check cpu_callback(
     case CPU_UP_CANCELED:
     case CPU_DEAD:
     case CPU_RESUME_FAILED:
-        migrate_timers_from_cpu(cpu);
+        if ( system_state != SYS_STATE_suspend )
+            migrate_timers_from_cpu(cpu);
 
         if ( !park_offline_cpus && system_state != SYS_STATE_suspend )
             free_percpu_timers(cpu);
