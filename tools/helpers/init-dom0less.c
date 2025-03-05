@@ -25,7 +25,7 @@ static int alloc_xs_page(struct xc_interface_core *xch,
 {
     int rc;
     const xen_pfn_t base = GUEST_MAGIC_BASE >> XC_PAGE_SHIFT;
-    xen_pfn_t p2m = (GUEST_MAGIC_BASE >> XC_PAGE_SHIFT) + XENSTORE_PFN_OFFSET;
+    xen_pfn_t p2m = base + XENSTORE_PFN_OFFSET;
 
     rc = xc_domain_setmaxmem(xch, info->domid,
                              info->max_memkb + (XC_PAGE_SIZE/1024));
@@ -40,6 +40,20 @@ static int alloc_xs_page(struct xc_interface_core *xch,
     rc = xc_clear_domain_page(xch, info->domid, *xenstore_pfn);
     if (rc < 0)
         return rc;
+
+    return 0;
+}
+
+static int get_xs_page(struct xc_interface_core *xch, libxl_dominfo *info,
+                       uint64_t *xenstore_pfn)
+{
+    int rc;
+
+    rc = xc_hvm_param_get(xch, info->domid, HVM_PARAM_STORE_PFN, xenstore_pfn);
+    if (rc < 0) {
+        printf("Failed to get HVM_PARAM_STORE_PFN\n");
+        return 1;
+    }
 
     return 0;
 }
@@ -100,6 +114,7 @@ static bool do_xs_write_vm(struct xs_handle *xsh, xs_transaction_t t,
  */
 static int create_xenstore(struct xs_handle *xsh,
                            libxl_dominfo *info, libxl_uuid uuid,
+                           uint64_t xenstore_pfn,
                            evtchn_port_t xenstore_port)
 {
     domid_t domid;
@@ -145,8 +160,7 @@ static int create_xenstore(struct xs_handle *xsh,
     rc = snprintf(target_memkb_str, STR_MAX_LENGTH, "%"PRIu64, info->current_memkb);
     if (rc < 0 || rc >= STR_MAX_LENGTH)
         return rc;
-    rc = snprintf(ring_ref_str, STR_MAX_LENGTH, "%lld",
-                  (GUEST_MAGIC_BASE >> XC_PAGE_SHIFT) + XENSTORE_PFN_OFFSET);
+    rc = snprintf(ring_ref_str, STR_MAX_LENGTH, "%"PRIu64, xenstore_pfn);
     if (rc < 0 || rc >= STR_MAX_LENGTH)
         return rc;
     rc = snprintf(xenstore_port_str, STR_MAX_LENGTH, "%u", xenstore_port);
@@ -230,7 +244,6 @@ static int init_domain(struct xs_handle *xsh,
     libxl_uuid uuid;
     uint64_t xenstore_evtchn, xenstore_pfn;
     int rc;
-    struct xenstore_domain_interface *intf;
 
     printf("Init dom0less domain: %u\n", info->domid);
 
@@ -245,20 +258,35 @@ static int init_domain(struct xs_handle *xsh,
     if (!xenstore_evtchn)
         return 0;
 
-    /* Alloc xenstore page */
-    if (alloc_xs_page(xch, info, &xenstore_pfn) != 0) {
-        printf("Error on alloc magic pages\n");
+    /* Get xenstore page */
+    if (get_xs_page(xch, info, &xenstore_pfn) != 0)
         return 1;
-    }
 
-    intf = xenforeignmemory_map(xfh, info->domid, PROT_READ | PROT_WRITE, 1,
-                                &xenstore_pfn, NULL);
-    if (!intf) {
-        printf("Error mapping xenstore page\n");
-        return 1;
+    if (xenstore_pfn == ~0ULL) {
+        struct xenstore_domain_interface *intf;
+
+        rc = alloc_xs_page(xch, info, &xenstore_pfn);
+        if (rc != 0) {
+            printf("Error on getting xenstore page\n");
+            return 1;
+        }
+
+        intf = xenforeignmemory_map(xfh, info->domid, PROT_READ | PROT_WRITE, 1,
+                                    &xenstore_pfn, NULL);
+        if (!intf) {
+            printf("Error mapping xenstore page\n");
+            return 1;
+        }
+
+        intf->connection = XENSTORE_RECONNECT;
+        xenforeignmemory_unmap(xfh, intf, 1);
+
+        /* Now everything is ready: set HVM_PARAM_STORE_PFN */
+        rc = xc_hvm_param_set(xch, info->domid, HVM_PARAM_STORE_PFN,
+                xenstore_pfn);
+        if (rc < 0)
+            return rc;
     }
-    intf->connection = XENSTORE_RECONNECT;
-    xenforeignmemory_unmap(xfh, intf, 1);
 
     rc = xc_dom_gnttab_seed(xch, info->domid, true,
                             (xen_pfn_t)-1, xenstore_pfn, 0, 0);
@@ -272,19 +300,11 @@ static int init_domain(struct xs_handle *xsh,
     if (rc)
         err(1, "gen_stub_json_config");
 
-    /* Now everything is ready: set HVM_PARAM_STORE_PFN */
-    rc = xc_hvm_param_set(xch, info->domid, HVM_PARAM_STORE_PFN,
-                          xenstore_pfn);
-    if (rc < 0)
-        return rc;
-
-    rc = create_xenstore(xsh, info, uuid, xenstore_evtchn);
+    rc = create_xenstore(xsh, info, uuid, xenstore_pfn, xenstore_evtchn);
     if (rc)
         err(1, "writing to xenstore");
 
-    rc = xs_introduce_domain(xsh, info->domid,
-            (GUEST_MAGIC_BASE >> XC_PAGE_SHIFT) + XENSTORE_PFN_OFFSET,
-            xenstore_evtchn);
+    rc = xs_introduce_domain(xsh, info->domid, xenstore_pfn, xenstore_evtchn);
     if (!rc)
         err(1, "xs_introduce_domain");
     return 0;

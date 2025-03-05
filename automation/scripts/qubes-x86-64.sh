@@ -10,6 +10,8 @@ set -ex
 #  - pci-pv         PV dom0,  PV domU + PCI Passthrough
 #  - pvshim         PV dom0,  PVSHIM domU
 #  - s3             PV dom0,  S3 suspend/resume
+#  - tools-tests-pv PV dom0, run tests from tools/tests/*
+#  - tools-tests-pvh PVH dom0, run tests from tools/tests/*
 test_variant=$1
 
 ### defaults
@@ -19,6 +21,7 @@ timeout=120
 domU_type="pvh"
 domU_vif="'bridge=xenbr0',"
 domU_extra_config=
+retrieve_xml=
 
 case "${test_variant}" in
     ### test: smoke test & smoke test PVH & smoke test HVM & smoke test PVSHIM
@@ -126,6 +129,21 @@ done
 "
         ;;
 
+    ### tests: tools-tests-pv, tools-tests-pvh
+    "tools-tests-pv"|"tools-tests-pvh")
+        retrieve_xml=1
+        passed="test passed"
+        domU_check=""
+        dom0_check="
+/tests/run-tools-tests /tests /tmp/tests-junit.xml && echo \"${passed}\"
+nc -l -p 8080 < /tmp/tests-junit.xml >/dev/null &
+"
+        if [ "${test_variant}" = "tools-tests-pvh" ]; then
+            extra_xen_opts="dom0=pvh"
+        fi
+
+        ;;
+
     *)
         echo "Unrecognised test_variant '${test_variant}'" >&2
         exit 1
@@ -144,26 +162,28 @@ disk = [ ]
 ${domU_extra_config}
 "
 
-# DomU
-mkdir -p rootfs
-cd rootfs
-# fakeroot is needed to preserve device nodes in rootless podman container
-fakeroot -s ../fakeroot-save tar xzf ../binaries/initrd.tar.gz
-mkdir proc
-mkdir run
-mkdir srv
-mkdir sys
-rm var/run
-echo "#!/bin/sh
+if [ -n "$domU_check" ]; then
+    # DomU
+    mkdir -p rootfs
+    cd rootfs
+    # fakeroot is needed to preserve device nodes in rootless podman container
+    fakeroot -s ../fakeroot-save tar xzf ../binaries/initrd.tar.gz
+    mkdir proc
+    mkdir run
+    mkdir srv
+    mkdir sys
+    rm var/run
+    echo "#!/bin/sh
 
 ${domU_check}
 " > etc/local.d/xen.start
-chmod +x etc/local.d/xen.start
-echo "rc_verbose=yes" >> etc/rc.conf
-sed -i -e 's/^Welcome/domU \0/' etc/issue
-find . | fakeroot -i ../fakeroot-save cpio -H newc -o | gzip > ../binaries/domU-rootfs.cpio.gz
-cd ..
-rm -rf rootfs
+    chmod +x etc/local.d/xen.start
+    echo "rc_verbose=yes" >> etc/rc.conf
+    sed -i -e 's/^Welcome/domU \0/' etc/issue
+    find . | fakeroot -i ../fakeroot-save cpio -H newc -o | gzip > ../binaries/domU-rootfs.cpio.gz
+    cd ..
+    rm -rf rootfs
+fi
 
 # DOM0 rootfs
 mkdir -p rootfs
@@ -176,6 +196,8 @@ mkdir srv
 mkdir sys
 rm var/run
 cp -ar ../binaries/dist/install/* .
+cp -ar ../binaries/tests .
+cp -a ../automation/scripts/run-tools-tests tests/
 
 echo "#!/bin/bash
 
@@ -188,11 +210,23 @@ ifconfig eth0 up
 ifconfig xenbr0 up
 ifconfig xenbr0 192.168.0.1
 
+" > etc/local.d/xen.start
+
+if [ -n "$retrieve_xml" ]; then
+    echo "timeout 30s udhcpc -i xenbr0" >> etc/local.d/xen.start
+fi
+
+if [ -n "$domU_check" ]; then
+    echo "
 # get domU console content into test log
 tail -F /var/log/xen/console/guest-domU.log 2>/dev/null | sed -e \"s/^/(domU) /\" &
 xl create /etc/xen/domU.cfg
 ${dom0_check}
-" > etc/local.d/xen.start
+" >> etc/local.d/xen.start
+else
+    echo "${dom0_check}" >> etc/local.d/xen.start
+fi
+
 chmod +x etc/local.d/xen.start
 echo "$domU_config" > etc/xen/domU.cfg
 
@@ -201,7 +235,9 @@ echo "XENCONSOLED_TRACE=all" >> etc/default/xencommons
 echo "QEMU_XEN=/bin/false" >> etc/default/xencommons
 mkdir -p var/log/xen/console
 cp ../binaries/bzImage boot/vmlinuz
-cp ../binaries/domU-rootfs.cpio.gz boot/initrd-domU
+if [ -n "$domU_check" ]; then
+    cp ../binaries/domU-rootfs.cpio.gz boot/initrd-domU
+fi
 find . | fakeroot -i ../fakeroot-save cpio -H newc -o | gzip > ../binaries/dom0-rootfs.cpio.gz
 cd ..
 
@@ -258,6 +294,10 @@ tail -n 100 smoke.serial
 if [ $timeout -le 0 ]; then
     echo "ERROR: test timeout, aborting"
     exit 1
+fi
+
+if [ -n "$retrieve_xml" ]; then
+    nc -w 10 "$SUT_ADDR" 8080 > tests-junit.xml </dev/null
 fi
 
 sleep 1

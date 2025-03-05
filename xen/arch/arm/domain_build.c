@@ -1615,6 +1615,7 @@ static int __init make_gic_node(const struct domain *d, void *fdt,
     int res = 0;
     const void *addrcells, *sizecells;
     u32 addrcells_len, sizecells_len;
+    const char *name;
 
     /*
      * Xen currently supports only a single GIC. Discard any secondary
@@ -1628,7 +1629,11 @@ static int __init make_gic_node(const struct domain *d, void *fdt,
 
     dt_dprintk("Create gic node\n");
 
-    res = fdt_begin_node(fdt, "interrupt-controller");
+    /* Use the same name as the GIC node in host device tree */
+    name = strrchr(gic->full_name, '/');
+    name = name ? name + 1 : gic->full_name;
+
+    res = fdt_begin_node(fdt, name);
     if ( res )
         return res;
 
@@ -2033,7 +2038,9 @@ static int __init prepare_dtb_hwdom(struct domain *d, struct kernel_info *kinfo)
     if ( ret < 0 )
         goto err;
 
-    fdt_finish_reservemap(kinfo->fdt);
+    ret = fdt_finish_reservemap(kinfo->fdt);
+    if ( ret )
+        goto err;
 
     ret = handle_node(d, kinfo, dt_host, default_p2mt);
     if ( ret )
@@ -2110,12 +2117,12 @@ static void __init initrd_load(struct kernel_info *kinfo)
 
     initrd = ioremap_wc(paddr, len);
     if ( !initrd )
-        panic("Unable to map the hwdom initrd\n");
+        panic("Unable to map the %pd initrd\n", kinfo->d);
 
     res = copy_to_guest_phys_flush_dcache(kinfo->d, load_addr,
                                           initrd, len);
     if ( res != 0 )
-        panic("Unable to copy the initrd in the hwdom memory\n");
+        panic("Unable to copy the initrd in the %pd memory\n", kinfo->d);
 
     iounmap(initrd);
 }

@@ -87,51 +87,54 @@
  * doing the final put_page(), and remove it from the iommu if so.
  */
 
+#include <xen/domain.h>
+#include <xen/domain_page.h>
+#include <xen/efi.h>
+#include <xen/err.h>
+#include <xen/event.h>
+#include <xen/guest_access.h>
+#include <xen/hypercall.h>
 #include <xen/init.h>
+#include <xen/iocap.h>
 #include <xen/ioreq.h>
+#include <xen/irq.h>
 #include <xen/kernel.h>
 #include <xen/lib.h>
 #include <xen/livepatch.h>
 #include <xen/mm.h>
 #include <xen/param.h>
-#include <xen/domain.h>
-#include <xen/sched.h>
-#include <xen/err.h>
 #include <xen/perfc.h>
-#include <xen/irq.h>
-#include <xen/softirq.h>
-#include <xen/domain_page.h>
-#include <xen/event.h>
-#include <xen/iocap.h>
-#include <xen/guest_access.h>
 #include <xen/pfn.h>
+#include <xen/sched.h>
+#include <xen/softirq.h>
+#include <xen/trace.h>
 #include <xen/vmap.h>
 #include <xen/xmalloc.h>
-#include <xen/efi.h>
-#include <xen/hypercall.h>
-#include <xen/mm.h>
-#include <asm/paging.h>
-#include <asm/shadow.h>
-#include <asm/page.h>
-#include <asm/flushtlb.h>
-#include <asm/io.h>
-#include <asm/ldt.h>
-#include <asm/x86_emulate.h>
+
 #include <asm/e820.h>
-#include <asm/shared.h>
-#include <asm/mem_sharing.h>
-#include <public/memory.h>
-#include <public/sched.h>
-#include <xsm/xsm.h>
-#include <xen/trace.h>
-#include <asm/setup.h>
 #include <asm/fixmap.h>
-#include <asm/io_apic.h>
-#include <asm/pci.h>
+#include <asm/flushtlb.h>
 #include <asm/guest.h>
+#include <asm/idt.h>
+#include <asm/io.h>
+#include <asm/io_apic.h>
+#include <asm/ldt.h>
+#include <asm/mem_sharing.h>
+#include <asm/page.h>
+#include <asm/paging.h>
+#include <asm/pci.h>
 #include <asm/pv/domain.h>
 #include <asm/pv/mm.h>
+#include <asm/setup.h>
+#include <asm/shadow.h>
+#include <asm/shared.h>
 #include <asm/trampoline.h>
+#include <asm/x86_emulate.h>
+
+#include <public/memory.h>
+#include <public/sched.h>
+
+#include <xsm/xsm.h>
 
 #ifdef CONFIG_PV
 #include "pv/mm.h"
@@ -6637,6 +6640,9 @@ static void __init __maybe_unused build_assertions(void)
      * using different PATs will not work.
      */
     BUILD_BUG_ON(XEN_MSR_PAT != 0x050100070406ULL);
+
+    /* IST_MAX IST pages + at least 1 guard page + primary stack. */
+    BUILD_BUG_ON((IST_MAX + 1) * PAGE_SIZE + PRIMARY_STACK_SIZE > STACK_SIZE);
 }
 
 /*

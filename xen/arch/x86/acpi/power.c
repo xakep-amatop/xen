@@ -11,27 +11,28 @@
  */
 
 #include <xen/acpi.h>
+#include <xen/console.h>
+#include <xen/cpu.h>
+#include <xen/domain.h>
 #include <xen/errno.h>
 #include <xen/iocap.h>
+#include <xen/iommu.h>
 #include <xen/param.h>
 #include <xen/sched.h>
-#include <asm/acpi.h>
-#include <asm/irq.h>
 #include <xen/spinlock.h>
-#include <xen/sched.h>
-#include <xen/domain.h>
-#include <xen/console.h>
-#include <xen/iommu.h>
 #include <xen/watchdog.h>
-#include <xen/cpu.h>
-#include <public/platform.h>
-#include <asm/tboot.h>
+
+#include <asm/acpi.h>
 #include <asm/apic.h>
 #include <asm/io_apic.h>
+#include <asm/irq.h>
 #include <asm/microcode.h>
 #include <asm/prot-key.h>
 #include <asm/spec_ctrl.h>
+#include <asm/tboot.h>
 #include <asm/trampoline.h>
+
+#include <public/platform.h>
 
 #include <acpi/cpufreq/cpufreq.h>
 
@@ -134,35 +135,6 @@ static void device_power_up(enum dev_power_saved saved)
         BUG();
         break;
     }
-}
-
-static void freeze_domains(void)
-{
-    struct domain *d;
-
-    rcu_read_lock(&domlist_read_lock);
-    /*
-     * Note that we iterate in order of domain-id. Hence we will pause dom0
-     * first which is required for correctness (as only dom0 can add domains to
-     * the domain list). Otherwise we could miss concurrently-created domains.
-     */
-    for_each_domain ( d )
-        domain_pause(d);
-    rcu_read_unlock(&domlist_read_lock);
-
-    scheduler_disable();
-}
-
-static void thaw_domains(void)
-{
-    struct domain *d;
-
-    scheduler_enable();
-
-    rcu_read_lock(&domlist_read_lock);
-    for_each_domain ( d )
-        domain_unpause(d);
-    rcu_read_unlock(&domlist_read_lock);
 }
 
 static void acpi_sleep_prepare(u32 state)

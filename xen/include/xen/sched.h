@@ -24,6 +24,7 @@
 #include <asm/current.h>
 #include <xen/vpci.h>
 #include <xen/wait.h>
+#include <xen/watchdog.h>
 #include <public/xen.h>
 #include <public/domctl.h>
 #include <public/sysctl.h>
@@ -569,7 +570,7 @@ struct domain
 #define NR_DOMAIN_WATCHDOG_TIMERS 2
     spinlock_t watchdog_lock;
     uint32_t watchdog_inuse_map;
-    struct timer watchdog_timer[NR_DOMAIN_WATCHDOG_TIMERS];
+    struct watchdog_timer watchdog_timer[NR_DOMAIN_WATCHDOG_TIMERS];
 
     struct rcu_head rcu;
 
@@ -1059,6 +1060,9 @@ static inline struct vcpu *domain_vcpu(const struct domain *d,
     return vcpu_id >= d->max_vcpus ? NULL : d->vcpu[idx];
 }
 
+void freeze_domains(void);
+void thaw_domains(void);
+
 void cpu_init(void);
 
 /*
@@ -1104,6 +1108,15 @@ void scheduler_disable(void);
 
 void watchdog_domain_init(struct domain *d);
 void watchdog_domain_destroy(struct domain *d);
+
+#ifdef CONFIG_SYSTEM_SUSPEND
+/*
+ * Suspend/resume watchdogs of domain (while the domain is suspended its
+ * watchdogs should be on pause)
+ */
+void watchdog_domain_suspend(struct domain *d);
+void watchdog_domain_resume(struct domain *d);
+#endif /* CONFIG_SYSTEM_SUSPEND */
 
 /*
  * Use this check when the following are both true:

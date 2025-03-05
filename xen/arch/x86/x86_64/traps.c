@@ -1,28 +1,27 @@
-
-#include <xen/version.h>
-#include <xen/init.h>
-#include <xen/sched.h>
-#include <xen/lib.h>
-#include <xen/errno.h>
-#include <xen/mm.h>
-#include <xen/irq.h>
-#include <xen/symbols.h>
 #include <xen/console.h>
+#include <xen/errno.h>
+#include <xen/guest_access.h>
+#include <xen/hypercall.h>
+#include <xen/init.h>
+#include <xen/irq.h>
+#include <xen/lib.h>
+#include <xen/mm.h>
 #include <xen/sched.h>
 #include <xen/shutdown.h>
-#include <xen/guest_access.h>
+#include <xen/symbols.h>
+#include <xen/version.h>
 #include <xen/watchdog.h>
-#include <xen/hypercall.h>
+
 #include <asm/current.h>
-#include <asm/flushtlb.h>
-#include <asm/traps.h>
 #include <asm/endbr.h>
 #include <asm/event.h>
-#include <asm/nmi.h>
+#include <asm/flushtlb.h>
+#include <asm/hvm/hvm.h>
 #include <asm/msr.h>
+#include <asm/nmi.h>
 #include <asm/page.h>
 #include <asm/shared.h>
-#include <asm/hvm/hvm.h>
+#include <asm/traps.h>
 
 
 static void print_xen_info(void)
@@ -170,7 +169,7 @@ void show_registers(const struct cpu_user_regs *regs)
     }
 }
 
-void vcpu_show_registers(const struct vcpu *v)
+void vcpu_show_registers(struct vcpu *v)
 {
     const struct cpu_user_regs *regs = &v->arch.user_regs;
     struct cpu_user_regs aux_regs;
@@ -180,7 +179,7 @@ void vcpu_show_registers(const struct vcpu *v)
     if ( is_hvm_vcpu(v) )
     {
         aux_regs = *regs;
-        get_hvm_registers(v->domain->vcpu[v->vcpu_id], &aux_regs, crs);
+        get_hvm_registers(v, &aux_regs, crs);
         regs = &aux_regs;
         context = CTXT_hvm_guest;
     }
@@ -342,9 +341,6 @@ void subarch_percpu_traps_init(void)
     unsigned long stub_va = this_cpu(stubs.addr);
     unsigned char *stub_page;
     unsigned int offset;
-
-    /* IST_MAX IST pages + at least 1 guard page + primary stack. */
-    BUILD_BUG_ON((IST_MAX + 1) * PAGE_SIZE + PRIMARY_STACK_SIZE > STACK_SIZE);
 
     /* No PV guests?  No need to set up SYSCALL/SYSENTER infrastructure. */
     if ( !IS_ENABLED(CONFIG_PV) )

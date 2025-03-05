@@ -8,6 +8,12 @@
 #define __XEN_WATCHDOG_H__
 
 #include <xen/types.h>
+#include <xen/timer.h>
+
+struct watchdog_timer {
+    struct timer timer;
+    uint32_t timeout;
+};
 
 #ifdef CONFIG_WATCHDOG
 

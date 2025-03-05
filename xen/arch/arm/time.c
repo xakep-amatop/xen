@@ -372,6 +372,32 @@ void domain_set_time_offset(struct domain *d, int64_t time_offset_seconds)
     /* XXX update guest visible wallclock time */
 }
 
+#ifdef CONFIG_SYSTEM_SUSPEND
+
+void time_suspend(void)
+{
+    /* Disable physical EL1 timer */
+    WRITE_SYSREG(0, CNTP_CTL_EL0);
+
+    /* Disable hypervisor's timer */
+    WRITE_SYSREG(0, CNTHP_CTL_EL2);
+    isb();
+}
+
+void time_resume(void)
+{
+    /*
+     * Raising timer softirq will trigger generic timer code to reprogram_timer
+     * with the correct timeout value (which is not known here). There is no
+     * need to do anything else in order to recover the time keeping from power
+     * down, because the system counter is not affected by the power down (it
+     * resides out of the ARM's cluster in an always-on part of the SoC).
+     */
+    raise_softirq(TIMER_SOFTIRQ);
+}
+
+#endif /* CONFIG_SYSTEM_SUSPEND */
+
 static int cpu_time_callback(struct notifier_block *nfb,
                              unsigned long action,
                              void *hcpu)

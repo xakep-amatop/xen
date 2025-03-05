@@ -12,65 +12,68 @@
  * Gareth Hughes <gareth@valinux.com>, May 2000
  */
 
+#include <xen/bitops.h>
 #include <xen/bug.h>
-#include <xen/init.h>
-#include <xen/sched.h>
-#include <xen/lib.h>
+#include <xen/console.h>
+#include <xen/delay.h>
+#include <xen/domain_page.h>
 #include <xen/err.h>
 #include <xen/errno.h>
-#include <xen/hypercall.h>
-#include <xen/mm.h>
-#include <xen/param.h>
-#include <xen/console.h>
-#include <xen/shutdown.h>
-#include <xen/guest_access.h>
-#include <asm/regs.h>
-#include <xen/delay.h>
 #include <xen/event.h>
-#include <xen/spinlock.h>
-#include <xen/irq.h>
-#include <xen/perfc.h>
-#include <xen/softirq.h>
-#include <xen/domain_page.h>
-#include <xen/symbols.h>
+#include <xen/guest_access.h>
+#include <xen/hypercall.h>
+#include <xen/init.h>
 #include <xen/iocap.h>
+#include <xen/irq.h>
 #include <xen/kexec.h>
-#include <xen/trace.h>
+#include <xen/lib.h>
+#include <xen/livepatch.h>
+#include <xen/mm.h>
 #include <xen/paging.h>
+#include <xen/param.h>
+#include <xen/perfc.h>
+#include <xen/sched.h>
+#include <xen/shutdown.h>
+#include <xen/softirq.h>
+#include <xen/spinlock.h>
+#include <xen/symbols.h>
+#include <xen/trace.h>
 #include <xen/virtual_region.h>
 #include <xen/watchdog.h>
-#include <xen/livepatch.h>
-#include <asm/system.h>
-#include <asm/io.h>
+
+#include <xsm/xsm.h>
+
+#include <asm/apic.h>
 #include <asm/atomic.h>
-#include <xen/bitops.h>
-#include <asm/desc.h>
+#include <asm/cpuid.h>
 #include <asm/debugreg.h>
-#include <asm/gdbsx.h>
-#include <asm/smp.h>
+#include <asm/desc.h>
 #include <asm/flushtlb.h>
-#include <asm/uaccess.h>
+#include <asm/gdbsx.h>
+#include <asm/hpet.h>
+#include <asm/hvm/vpt.h>
 #include <asm/i387.h>
-#include <asm/xstate.h>
+#include <asm/idt.h>
+#include <asm/io.h>
+#include <asm/irq-vectors.h>
+#include <asm/mc146818rtc.h>
+#include <asm/mce.h>
 #include <asm/msr.h>
 #include <asm/nmi.h>
-#include <asm/xenoprof.h>
-#include <asm/shared.h>
-#include <asm/x86_emulate.h>
-#include <asm/traps.h>
-#include <asm/hvm/vpt.h>
-#include <asm/mce.h>
-#include <asm/apic.h>
-#include <asm/mc146818rtc.h>
-#include <asm/hpet.h>
-#include <asm/vpmu.h>
-#include <asm/cpuid.h>
-#include <xsm/xsm.h>
-#include <asm/irq-vectors.h>
-#include <asm/pv/traps.h>
-#include <asm/pv/trace.h>
 #include <asm/pv/mm.h>
+#include <asm/pv/trace.h>
+#include <asm/pv/traps.h>
+#include <asm/regs.h>
+#include <asm/shared.h>
 #include <asm/shstk.h>
+#include <asm/smp.h>
+#include <asm/system.h>
+#include <asm/traps.h>
+#include <asm/uaccess.h>
+#include <asm/vpmu.h>
+#include <asm/x86_emulate.h>
+#include <asm/xenoprof.h>
+#include <asm/xstate.h>
 
 /*
  * opt_nmi: one of 'ignore', 'dom0', or 'fatal'.
@@ -1983,7 +1986,7 @@ static void __init init_ler(void)
     setup_force_cpu_cap(X86_FEATURE_XEN_LBR);
 }
 
-extern void (*const autogen_entrypoints[X86_NR_VECTORS])(void);
+extern void (*const autogen_entrypoints[X86_IDT_VECTORS])(void);
 void __init trap_init(void)
 {
     unsigned int vector;
@@ -1993,7 +1996,7 @@ void __init trap_init(void)
 
     pv_trap_init();
 
-    for ( vector = 0; vector < X86_NR_VECTORS; ++vector )
+    for ( vector = 0; vector < X86_IDT_VECTORS; ++vector )
     {
         if ( autogen_entrypoints[vector] )
         {
