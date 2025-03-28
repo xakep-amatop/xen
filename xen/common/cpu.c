@@ -48,10 +48,6 @@ const unsigned long cpu_bit_bitmap[BITS_PER_LONG+1][BITS_TO_LONGS(NR_CPUS)] = {
 
 static DEFINE_RWLOCK(cpu_add_remove_lock);
 
-#ifdef CONFIG_ARM_64
-static DEFINE_PER_CPU(struct tasklet, cpu_down_tasklet);
-#endif
-
 bool get_cpu_maps(void)
 {
     return read_trylock(&cpu_add_remove_lock);
@@ -105,14 +101,6 @@ static void cf_check _take_cpu_down(void *unused)
     __cpu_disable();
 }
 
-#ifdef CONFIG_ARM_64
-static int cf_check cpu_disable_stop_machine(void *unused)
-{
-    __cpu_disable();
-    return 0;
-}
-#endif
-
 static int cf_check take_cpu_down(void *arg)
 {
     _take_cpu_down(arg);
@@ -140,14 +128,6 @@ int cpu_down(unsigned int cpu)
 
     if ( system_state < SYS_STATE_active || system_state == SYS_STATE_resume )
         on_selected_cpus(cpumask_of(cpu), _take_cpu_down, NULL, true);
-#ifdef CONFIG_ARM_64
-    else if ( system_state == SYS_STATE_suspend )
-    {
-        tasklet_schedule_on_cpu(&per_cpu(cpu_down_tasklet, cpu), cpu);
-        if ( (err = stop_machine_run(cpu_disable_stop_machine, NULL, cpu)) < 0 )
-            goto fail;
-    }
-#endif
     else if ( (err = stop_machine_run(take_cpu_down, NULL, cpu)) < 0 )
         goto fail;
 
@@ -267,26 +247,3 @@ void enable_nonboot_cpus(void)
 
     cpumask_clear(&frozen_cpus);
 }
-
-#ifdef CONFIG_ARM_64
-
-static void cf_check cpu_down_t_action(void *unused)
-{
-    cpu_notifier_call_chain(smp_processor_id(), CPU_DYING, NULL, true);
-}
-
-static int __init init_cpu_down_tasklet(void)
-{
-    unsigned int cpu;
-
-    for_each_possible_cpu(cpu) {
-        struct tasklet *t = &per_cpu(cpu_down_tasklet, cpu);
-
-        tasklet_init(t, cpu_down_t_action, NULL);
-    }
-
-    return 0;
-}
-__initcall(init_cpu_down_tasklet);
-
-#endif /* CONFIG_ARM_64 */
