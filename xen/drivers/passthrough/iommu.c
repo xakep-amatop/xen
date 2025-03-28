@@ -613,7 +613,7 @@ int __init iommu_setup(void)
 
 int iommu_suspend(void)
 {
-    if ( iommu_enabled && iommu_get_ops() && iommu_get_ops()->suspend )
+    if ( iommu_enabled )
         return iommu_call(iommu_get_ops(), suspend);
 
     return 0;
@@ -621,7 +621,7 @@ int iommu_suspend(void)
 
 void iommu_resume(void)
 {
-    if ( iommu_enabled && iommu_get_ops() && iommu_get_ops()->resume )
+    if ( iommu_enabled )
         iommu_vcall(iommu_get_ops(), resume);
 }
 
