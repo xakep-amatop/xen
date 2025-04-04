@@ -363,6 +363,8 @@ retry:
     return;
 }
 
+extern unsigned debug_suspend;
+
 /**
  * vgic_inject_irq() - Inject an IRQ from a device to the vgic
  * @d:       The domain pointer
@@ -384,9 +386,15 @@ void vgic_inject_irq(struct domain *d, struct vcpu *vcpu, unsigned int intid,
     struct vgic_irq *irq;
     unsigned long flags;
 
+    if ( debug_suspend )
+        printk("%s:%d\n", __func__, __LINE__);
+
     irq = vgic_get_irq(d, vcpu, intid);
-    if ( !irq )
+    if ( !irq ) {
+        if ( debug_suspend )
+            printk("%s:%d\n", __func__, __LINE__);
         return;
+    }
 
     spin_lock_irqsave(&irq->irq_lock, flags);
 
@@ -395,6 +403,8 @@ void vgic_inject_irq(struct domain *d, struct vcpu *vcpu, unsigned int intid,
         /* Nothing to see here, move along... */
         spin_unlock_irqrestore(&irq->irq_lock, flags);
         vgic_put_irq(d, irq);
+        if ( debug_suspend )
+            printk("%s:%d\n", __func__, __LINE__);
         return;
     }
 
@@ -405,6 +415,9 @@ void vgic_inject_irq(struct domain *d, struct vcpu *vcpu, unsigned int intid,
 
     vgic_queue_irq_unlock(d, irq, flags);
     vgic_put_irq(d, irq);
+
+    if ( debug_suspend )
+        printk("%s:%d\n", __func__, __LINE__);
 
     return;
 }

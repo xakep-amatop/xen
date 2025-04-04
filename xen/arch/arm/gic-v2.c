@@ -1121,8 +1121,13 @@ static int gicv2_suspend(void)
 {
     unsigned int i;
 
+    printk("%s:%d\n", __func__, __LINE__);
+
     if ( !gicv2_context.gicd_isenabler )
         return -ENOMEM;
+
+
+    printk("%s:%d\n", __func__, __LINE__);
 
     /* Save GICC configuration */
     gicv2_context.gicc_ctlr = readl_gicc(GICC_CTLR);
@@ -1154,8 +1159,12 @@ static void gicv2_resume(void)
 {
     unsigned int i;
 
+    printk("%s:%d\n", __func__, __LINE__);
+
     if ( !gicv2_context.gicd_isenabler )
         return;
+
+    printk("%s:%d\n", __func__, __LINE__);
 
     /* Disable CPU interface and distributor */
     writel_gicc(0, GICC_CTLR);
@@ -1197,6 +1206,8 @@ static void gicv2_alloc_context(struct gicv2_context *gc)
 {
     uint32_t n = gicv2_info.nr_lines;
 
+    printk("%s:%d\n", __func__, __LINE__);
+
     gc->gicd_isenabler = xzalloc_array(uint32_t, DIV_ROUND_UP(n, 32));
     if ( !gc->gicd_isenabler )
         goto err_free;
@@ -1220,6 +1231,8 @@ static void gicv2_alloc_context(struct gicv2_context *gc)
     return;
 
  err_free:
+    printk("%s:%d\n", __func__, __LINE__);
+
     xfree(gc->gicd_icfgr);
     xfree(gc->gicd_ipriorityr);
     xfree(gc->gicd_itargetsr);

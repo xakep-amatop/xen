@@ -23,6 +23,8 @@
 #include <asm/vreg.h>
 #include <asm/vtimer.h>
 
+extern unsigned debug_suspend;
+
 /*
  * Check if regs is allowed access, user_gate is tail end of a
  * CNTKCTL_EL1_ bit name which gates user access
@@ -38,6 +40,8 @@ static void phys_timer_expired(void *data)
     if ( !(t->ctl & CNTx_CTL_MASK) )
     {
         perfc_incr(vtimer_phys_inject);
+        if (debug_suspend)
+            printk("%s:%d\n", __func__, __LINE__);
         vgic_inject_irq(t->v->domain, t->v, t->irq, true);
     }
     else
@@ -48,6 +52,8 @@ static void virt_timer_expired(void *data)
 {
     struct vtimer *t = data;
     t->ctl |= CNTx_CTL_MASK;
+    if (debug_suspend)
+        printk("%s:%d VCPU ID %d\n", __func__, __LINE__, t->v->vcpu_id);
     vgic_inject_irq(t->v->domain, t->v, t->irq, true);
     perfc_incr(vtimer_virt_inject);
 }
@@ -118,6 +124,9 @@ int vcpu_vtimer_init(struct vcpu *v)
         : GUEST_TIMER_PHYS_NS_PPI;
     t->v = v;
 
+    if (debug_suspend)
+        printk("%s:%d VCPU ID %d\n", __func__, __LINE__, v->vcpu_id);
+
     t = &v->arch.virt_timer;
     init_timer(&t->timer, virt_timer_expired, t, v->processor);
     t->ctl = 0;
@@ -133,9 +142,14 @@ int vcpu_vtimer_init(struct vcpu *v)
 
 void vcpu_timer_destroy(struct vcpu *v)
 {
+    if (debug_suspend)
+        printk("%s:%d VCPU ID %d\n", __func__, __LINE__, v->vcpu_id);
+
     if ( !v->arch.vtimer_initialized )
         return;
 
+    if (debug_suspend)
+        printk("%s:%d VCPU ID %d\n", __func__, __LINE__, v->vcpu_id);
     kill_timer(&v->arch.virt_timer.timer);
     kill_timer(&v->arch.phys_timer.timer);
 }
@@ -147,9 +161,15 @@ void virt_timer_save(struct vcpu *v)
     v->arch.virt_timer.ctl = READ_SYSREG(CNTV_CTL_EL0);
     WRITE_SYSREG(v->arch.virt_timer.ctl & ~CNTx_CTL_ENABLE, CNTV_CTL_EL0);
     v->arch.virt_timer.cval = READ_SYSREG64(CNTV_CVAL_EL0);
+
+    if (debug_suspend)
+        printk("%s:%d VCPU ID %d ns %lu\n", __func__, __LINE__, v->vcpu_id, ticks_to_ns(v->arch.virt_timer.cval));
+
     if ( (v->arch.virt_timer.ctl & CNTx_CTL_ENABLE) &&
          !(v->arch.virt_timer.ctl & CNTx_CTL_MASK))
     {
+        if (debug_suspend)
+            printk("%s:%d ns %lu %lu\n", __func__, __LINE__, ticks_to_ns(v->arch.virt_timer.cval), get_s_time());
         set_timer(&v->arch.virt_timer.timer,
                   v->domain->arch.virt_timer_base.nanoseconds +
                   ticks_to_ns(v->arch.virt_timer.cval));
@@ -159,6 +179,9 @@ void virt_timer_save(struct vcpu *v)
 void virt_timer_restore(struct vcpu *v)
 {
     ASSERT(!is_idle_vcpu(v));
+
+    if (debug_suspend)
+        printk("%s:%d VCPU ID %d ns %lu %lu\n", __func__, __LINE__, v->vcpu_id, ticks_to_ns(v->arch.virt_timer.cval), get_s_time());
 
     stop_timer(&v->arch.virt_timer.timer);
     migrate_timer(&v->arch.virt_timer.timer, v->processor);
@@ -371,6 +394,8 @@ static void vtimer_update_irq(struct vcpu *v, struct vtimer *vtimer,
      * We would have injected an IRQ already via SOFTIRQ when the timer expired.
      * Doing it here again is basically a NOP if the line was already high.
      */
+    if (debug_suspend)
+            printk("%s:%d\n", __func__, __LINE__);
     vgic_inject_irq(v->domain, v, vtimer->irq, level);
 }
 

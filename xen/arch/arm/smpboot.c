@@ -400,9 +400,13 @@ void asmlinkage start_secondary(void)
      * will make sure the assertion condition in alloc_xenheap_pages(),
      * i.e. !in_irq && local_irq_enabled() is satisfied.
      */
-    init_maintenance_interrupt();
+    if ( system_state != SYS_STATE_resume )
+    {
+        init_maintenance_interrupt();
+        init_tee_secondary();
+    }
+
     init_timer_interrupt();
-    init_tee_secondary();
 
     local_abort_enable();
 

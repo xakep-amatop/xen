@@ -112,6 +112,8 @@ static void vcpu_resume(struct vcpu *v)
     watchdog_domain_resume(v->domain);
 }
 
+unsigned debug_suspend = 0;
+
 /* Xen suspend. Note: data is not used (suspend is the suspend to RAM) */
 static long system_suspend(void *data)
 {
@@ -121,6 +123,7 @@ static long system_suspend(void *data)
     BUG_ON(system_state != SYS_STATE_active);
 
     system_state = SYS_STATE_suspend;
+    debug_suspend = 1;
     freeze_domains();
 
     /*
@@ -159,13 +162,6 @@ static long system_suspend(void *data)
         goto resume_console;
     }
 
-    status = iommu_suspend();
-    if ( status )
-    {
-        system_state = SYS_STATE_resume;
-        goto resume_console;
-    }
-
     /*
      * Enable identity mapping before entering suspend to simplify
      * the resume path
@@ -193,10 +189,10 @@ static long system_suspend(void *data)
     system_state = SYS_STATE_resume;
     update_boot_mapping(false);
 
-    iommu_resume();
-
 resume_console:
     console_resume();
+
+    console_end_sync();
 
     gic_resume();
 

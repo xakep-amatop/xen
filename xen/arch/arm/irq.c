@@ -211,6 +211,8 @@ int request_irq(unsigned int irq, unsigned int irqflags,
     return retval;
 }
 
+extern unsigned debug_suspend;
+
 /* Dispatch an interrupt */
 void do_IRQ(struct cpu_user_regs *regs, unsigned int irq, int is_fiq)
 {
@@ -260,9 +262,16 @@ void do_IRQ(struct cpu_user_regs *regs, unsigned int irq, int is_fiq)
          * guests.
          */
         ASSERT(irq >= NR_GIC_SGI);
+
+        if (debug_suspend)
+            printk("%s:%d IRQ %d\n", __func__, __LINE__, info->virq);
+
         vgic_inject_irq(info->d, NULL, info->virq, true);
         goto out_no_end;
     }
+
+    if ( debug_suspend && desc->irq < NR_LOCAL_IRQS )
+        printk("%s:%d IRQ %d\n", __func__, __LINE__, desc->irq);
 
     if ( test_bit(_IRQ_DISABLED, &desc->status) )
         goto out;
@@ -272,6 +281,9 @@ void do_IRQ(struct cpu_user_regs *regs, unsigned int irq, int is_fiq)
     action = desc->action;
 
     spin_unlock_irq(&desc->lock);
+
+    if ( debug_suspend && desc->irq < NR_LOCAL_IRQS )
+        printk("%s:%d IRQ %d\n", __func__, __LINE__, desc->irq);
 
     do
     {

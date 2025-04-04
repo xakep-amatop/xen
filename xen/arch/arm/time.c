@@ -255,6 +255,8 @@ static void htimer_interrupt(int irq, void *dev_id)
     WRITE_SYSREG(0, CNTHP_CTL_EL2);
 }
 
+extern unsigned debug_suspend;
+
 static void vtimer_interrupt(int irq, void *dev_id)
 {
     /*
@@ -274,6 +276,10 @@ static void vtimer_interrupt(int irq, void *dev_id)
 
     current->arch.virt_timer.ctl = READ_SYSREG(CNTV_CTL_EL0);
     WRITE_SYSREG(current->arch.virt_timer.ctl | CNTx_CTL_MASK, CNTV_CTL_EL0);
+
+    if ( debug_suspend )
+        printk_once("%s:%d\n", __func__, __LINE__);
+
     vgic_inject_irq(current->domain, current, current->arch.virt_timer.irq, true);
 }
 

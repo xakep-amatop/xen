@@ -565,12 +565,17 @@ void vgic_remove_irq_from_queues(struct vcpu *v, struct pending_irq *p)
     gic_remove_from_lr_pending(v, p);
 }
 
+extern unsigned debug_suspend;
+
 void vgic_inject_irq(struct domain *d, struct vcpu *v, unsigned int virq,
                      bool level)
 {
     uint8_t priority;
     struct pending_irq *iter, *n;
     unsigned long flags;
+
+    if ( debug_suspend )
+        printk("%s:%d\n", __func__, __LINE__);
 
     /*
      * For edge triggered interrupts we always ignore a "falling edge".
@@ -594,6 +599,8 @@ void vgic_inject_irq(struct domain *d, struct vcpu *v, unsigned int virq,
     if ( unlikely(!n) )
     {
         spin_unlock_irqrestore(&v->arch.vgic.lock, flags);
+        if ( debug_suspend )
+            printk("%s:%d\n", __func__, __LINE__);
         return;
     }
 
@@ -601,6 +608,8 @@ void vgic_inject_irq(struct domain *d, struct vcpu *v, unsigned int virq,
     if ( test_bit(_VPF_down, &v->pause_flags) )
     {
         spin_unlock_irqrestore(&v->arch.vgic.lock, flags);
+        if ( debug_suspend )
+            printk("%s:%d\n", __func__, __LINE__);
         return;
     }
 
@@ -609,6 +618,8 @@ void vgic_inject_irq(struct domain *d, struct vcpu *v, unsigned int virq,
     if ( !list_empty(&n->inflight) )
     {
         gic_raise_inflight_irq(v, virq);
+        if ( debug_suspend )
+            printk("%s:%d\n", __func__, __LINE__);
         goto out;
     }
 
@@ -616,18 +627,26 @@ void vgic_inject_irq(struct domain *d, struct vcpu *v, unsigned int virq,
     n->priority = priority;
 
     /* the irq is enabled */
-    if ( test_bit(GIC_IRQ_GUEST_ENABLED, &n->status) )
+    if ( test_bit(GIC_IRQ_GUEST_ENABLED, &n->status) ) {
         gic_raise_guest_irq(v, virq, priority);
+        if ( debug_suspend )
+            printk("%s:%d\n", __func__, __LINE__);
+    }
 
     list_for_each_entry ( iter, &v->arch.vgic.inflight_irqs, inflight )
     {
         if ( iter->priority > priority )
         {
             list_add_tail(&n->inflight, &iter->inflight);
+            if ( debug_suspend )
+                printk("%s:%d\n", __func__, __LINE__);
             goto out;
         }
     }
     list_add_tail(&n->inflight, &v->arch.vgic.inflight_irqs);
+
+    if ( debug_suspend )
+        printk("%s:%d\n", __func__, __LINE__);
 out:
     spin_unlock_irqrestore(&v->arch.vgic.lock, flags);
 
