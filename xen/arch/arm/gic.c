@@ -388,6 +388,9 @@ void gic_dump_info(struct vcpu *v)
 
 void init_maintenance_interrupt(void)
 {
+    if ( system_state == SYS_STATE_resume )
+        return;
+
     request_irq(gic_hw_ops->info->maintenance_irq, 0, maintenance_interrupt,
                 "irq-maintenance", NULL);
 }
@@ -461,6 +464,9 @@ static int cpu_gic_callback(struct notifier_block *nfb,
     switch ( action )
     {
     case CPU_DYING:
+        if ( system_state == SYS_STATE_suspend )
+            break;
+
         /* This is reverting the work done in init_maintenance_interrupt */
         release_irq(gic_hw_ops->info->maintenance_irq, NULL);
         break;
