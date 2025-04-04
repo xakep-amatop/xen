@@ -300,6 +300,9 @@ void release_irq(unsigned int irq, const void *dev_id)
     unsigned long flags;
     struct irqaction *action, **action_ptr;
 
+    if ( system_state == SYS_STATE_suspend )
+        return;
+
     desc = irq_to_desc(irq);
 
     spin_lock_irqsave(&desc->lock,flags);
