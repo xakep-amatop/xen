@@ -320,10 +320,13 @@ void init_timer_interrupt(void)
     WRITE_SYSREG(CNTHCTL_EL2_EL1PCTEN, CNTHCTL_EL2);
     disable_physical_timers();
 
-    request_irq(timer_irq[TIMER_HYP_PPI], 0, htimer_interrupt,
-                "hyptimer", NULL);
-    request_irq(timer_irq[TIMER_VIRT_PPI], 0, vtimer_interrupt,
-                   "virtimer", NULL);
+    if ( system_state != SYS_STATE_resume )
+    {
+        request_irq(timer_irq[TIMER_HYP_PPI], 0, htimer_interrupt,
+                    "hyptimer", NULL);
+        request_irq(timer_irq[TIMER_VIRT_PPI], 0, vtimer_interrupt,
+                    "virtimer", NULL);
+    }
 
     check_timer_irq_cfg(timer_irq[TIMER_HYP_PPI], "hypervisor");
     check_timer_irq_cfg(timer_irq[TIMER_VIRT_PPI], "virtual");

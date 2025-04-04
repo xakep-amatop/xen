@@ -363,7 +363,7 @@ void ffa_notif_init_interrupt(void)
 {
     int ret;
 
-    if ( fw_notif_enabled && notif_sri_irq < NR_GIC_SGI )
+    if ( fw_notif_enabled && notif_sri_irq < NR_GIC_SGI && system_state != SYS_STATE_resume )
     {
         /*
          * An error here is unlikely since the primary CPU has already
