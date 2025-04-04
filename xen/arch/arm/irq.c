@@ -112,6 +112,69 @@ static int init_local_irq_data(unsigned int cpu)
 
     return 0;
 }
+int restore_irq_after_suspend(unsigned int cpu)
+{
+    int irq;
+
+    printk("##### %s:%d SMP %d CPU %u\n", __func__, __LINE__, smp_processor_id(), cpu);
+
+    spin_lock(&local_irqs_type_lock);
+
+    for ( irq = 0; irq < NR_IRQS; irq++ )
+    {
+        unsigned long flags;
+        struct irqaction *action;
+        unsigned int i = 0;
+        struct irq_desc *desc = &per_cpu(local_irq_desc, cpu)[irq];
+    
+        if ( irq < NR_LOCAL_IRQS )
+            desc = &per_cpu(local_irq_desc, cpu)[irq];
+        else
+            desc = irq_to_desc(irq);
+
+        spin_lock_irqsave(&desc->lock, flags);
+
+        action = desc->action;
+
+        if (action) {
+            printk("\t##### %s:%d SMP %d CPU %u IRQ %d\n", __func__, __LINE__, smp_processor_id(), cpu, irq);
+        
+            while (action)
+            {
+                printk("\t\taction[%03u]: %pS\n", i, action->handler);
+                i++;
+                action = action->next;
+            }
+        }
+
+        if ( test_bit(_IRQ_DISABLED, &desc->status) )
+        {
+            spin_unlock_irqrestore(&desc->lock, flags);
+            continue;
+        } else {
+            printk("\t##### %s:%d SMP %d CPU %u IRQ %d\n", __func__, __LINE__, smp_processor_id(), cpu, irq);
+        }
+        
+        if ( test_bit(_IRQ_GUEST, &desc->status) )
+        {
+            printk("\t##### %s:%d SMP %d CPU %u IRQ %d\n", __func__, __LINE__, smp_processor_id(), cpu, irq);
+            spin_unlock_irqrestore(&desc->lock, flags);
+            continue;
+        }
+
+        set_bit(_IRQ_DISABLED, &desc->status);
+
+        gic_route_irq_to_xen(desc, GIC_PRI_IRQ);
+        irq_set_affinity(desc, cpumask_of(cpu));
+        desc->handler->startup(desc);
+
+        spin_unlock_irqrestore(&desc->lock, flags);
+    }
+
+    spin_unlock(&local_irqs_type_lock);
+
+    return 0;
+}
 
 static int cpu_callback(struct notifier_block *nfb, unsigned long action,
                         void *hcpu)
@@ -122,10 +185,18 @@ static int cpu_callback(struct notifier_block *nfb, unsigned long action,
     switch ( action )
     {
     case CPU_UP_PREPARE:
-        rc = init_local_irq_data(cpu);
-        if ( rc )
-            printk(XENLOG_ERR "Unable to allocate local IRQ for CPU%u\n",
-                   cpu);
+        if ( system_state != SYS_STATE_resume )
+        {
+            rc = init_local_irq_data(cpu);
+            if ( rc )
+                printk(XENLOG_ERR "Unable to allocate local IRQ for CPU%u\n",
+                    cpu);
+        }
+        break;
+    case CPU_ONLINE:
+        printk("########## CPU ONLINE\n");
+        if ( system_state == SYS_STATE_resume )
+            //rc = restore_irq_after_suspend(cpu);
         break;
     }
 
@@ -239,14 +310,14 @@ void do_IRQ(struct cpu_user_regs *regs, unsigned int irq, int is_fiq)
     spin_lock(&desc->lock);
     desc->handler->ack(desc);
 
-#ifndef NDEBUG
+//#ifndef NDEBUG
     if ( !desc->action )
     {
         printk("Unknown %s %#3.3x\n",
                is_fiq ? "FIQ" : "IRQ", irq);
         goto out;
     }
-#endif
+//#endif
 
     if ( test_bit(_IRQ_GUEST, &desc->status) )
     {

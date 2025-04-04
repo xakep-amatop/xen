@@ -123,7 +123,7 @@ static long system_suspend(void *data)
     BUG_ON(system_state != SYS_STATE_active);
 
     system_state = SYS_STATE_suspend;
-    debug_suspend = 1;
+    debug_suspend = 0;
     freeze_domains();
 
     /*

@@ -320,6 +320,8 @@ smp_prepare_cpus(void)
 
 }
 
+int restore_irq_after_suspend(unsigned int cpu);
+
 /* Boot the current CPU */
 void asmlinkage start_secondary(void)
 {
@@ -407,6 +409,7 @@ void asmlinkage start_secondary(void)
     }
 
     init_timer_interrupt();
+    restore_irq_after_suspend(smp_processor_id());
 
     local_abort_enable();
 
