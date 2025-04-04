@@ -459,7 +459,8 @@ static int cpu_gic_callback(struct notifier_block *nfb,
     {
     case CPU_DYING:
         /* This is reverting the work done in init_maintenance_interrupt */
-        release_irq(gic_hw_ops->info->maintenance_irq, NULL);
+        if ( system_state != SYS_STATE_suspend )
+            release_irq(gic_hw_ops->info->maintenance_irq, NULL);
         break;
     default:
         break;

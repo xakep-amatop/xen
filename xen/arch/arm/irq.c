@@ -112,6 +112,40 @@ static int init_local_irq_data(unsigned int cpu)
 
     return 0;
 }
+int restore_irq_after_suspend(unsigned int cpu)
+{
+    int irq;
+
+    spin_lock(&local_irqs_type_lock);
+
+    for ( irq = 0; irq < NR_IRQS; irq++ )
+    {
+        unsigned long flags;
+        struct irq_desc *desc;
+
+        desc = irq_to_desc(irq);
+
+        spin_lock_irqsave(&desc->lock, flags);
+
+        if ( test_bit(_IRQ_DISABLED, &desc->status) || test_bit(_IRQ_GUEST, &desc->status) )
+        {
+            spin_unlock_irqrestore(&desc->lock, flags);
+            continue;
+        }
+
+        set_bit(_IRQ_DISABLED, &desc->status);
+
+        gic_route_irq_to_xen(desc, GIC_PRI_IRQ);
+        irq_set_affinity(desc, cpumask_of(cpu));
+        desc->handler->startup(desc);
+
+        spin_unlock_irqrestore(&desc->lock, flags);
+    }
+
+    spin_unlock(&local_irqs_type_lock);
+
+    return 0;
+}
 
 static int cpu_callback(struct notifier_block *nfb, unsigned long action,
                         void *hcpu)
@@ -122,10 +156,13 @@ static int cpu_callback(struct notifier_block *nfb, unsigned long action,
     switch ( action )
     {
     case CPU_UP_PREPARE:
-        rc = init_local_irq_data(cpu);
-        if ( rc )
-            printk(XENLOG_ERR "Unable to allocate local IRQ for CPU%u\n",
-                   cpu);
+        if ( system_state != SYS_STATE_resume )
+        {
+            rc = init_local_irq_data(cpu);
+            if ( rc )
+                printk(XENLOG_ERR "Unable to allocate local IRQ for CPU%u\n",
+                    cpu);
+        }
         break;
     }
 

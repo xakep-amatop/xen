@@ -314,10 +314,13 @@ void init_timer_interrupt(void)
     WRITE_SYSREG(0, CNTHP_CTL_EL2);   /* Hypervisor's timer disabled */
     isb();
 
-    request_irq(timer_irq[TIMER_HYP_PPI], 0, htimer_interrupt,
-                "hyptimer", NULL);
-    request_irq(timer_irq[TIMER_VIRT_PPI], 0, vtimer_interrupt,
-                   "virtimer", NULL);
+    if ( system_state != SYS_STATE_resume )
+    {
+        request_irq(timer_irq[TIMER_HYP_PPI], 0, htimer_interrupt,
+                    "hyptimer", NULL);
+        request_irq(timer_irq[TIMER_VIRT_PPI], 0, vtimer_interrupt,
+                    "virtimer", NULL);
+    }
 
     check_timer_irq_cfg(timer_irq[TIMER_HYP_PPI], "hypervisor");
     check_timer_irq_cfg(timer_irq[TIMER_VIRT_PPI], "virtual");
@@ -334,8 +337,11 @@ static void deinit_timer_interrupt(void)
     WRITE_SYSREG(0, CNTHP_CTL_EL2);   /* Disable hypervisor's timer */
     isb();
 
-    release_irq(timer_irq[TIMER_HYP_PPI], NULL);
-    release_irq(timer_irq[TIMER_VIRT_PPI], NULL);
+    if ( system_state != SYS_STATE_suspend )
+    {
+        release_irq(timer_irq[TIMER_HYP_PPI], NULL);
+        release_irq(timer_irq[TIMER_VIRT_PPI], NULL);
+    }
 }
 
 /* Wait a set number of microseconds */

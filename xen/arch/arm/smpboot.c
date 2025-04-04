@@ -320,6 +320,8 @@ smp_prepare_cpus(void)
 
 }
 
+int restore_irq_after_suspend(unsigned int cpu);
+
 /* Boot the current CPU */
 void asmlinkage start_secondary(void)
 {
@@ -400,9 +402,14 @@ void asmlinkage start_secondary(void)
      * will make sure the assertion condition in alloc_xenheap_pages(),
      * i.e. !in_irq && local_irq_enabled() is satisfied.
      */
-    init_maintenance_interrupt();
+    if ( system_state != SYS_STATE_resume )
+    {
+        init_maintenance_interrupt();
+        init_tee_secondary();
+    }
+
     init_timer_interrupt();
-    init_tee_secondary();
+    restore_irq_after_suspend(smp_processor_id());
 
     local_abort_enable();
 
