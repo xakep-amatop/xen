@@ -92,6 +92,12 @@ static void ctxt_switch_from(struct vcpu *p)
     if ( is_idle_vcpu(p) )
         return;
 
+
+    if ( test_bit(_VPF_suspended, &p->pause_flags) )
+    {
+        printk("%s\n", __func__);
+    }
+
     p2m_save_state(p);
 
     /* CP 15 */
@@ -175,6 +181,11 @@ static void ctxt_switch_to(struct vcpu *n)
      */
     if ( is_idle_vcpu(n) )
         return;
+
+    if ( test_bit(_VPF_suspended, &n->pause_flags) )
+    {
+        printk("%s\n", __func__);
+    }
 
     vpidr = READ_SYSREG(MIDR_EL1);
     WRITE_SYSREG(vpidr, VPIDR_EL2);
@@ -864,7 +875,7 @@ void arch_domain_shutdown(struct domain *d)
     switch ( d->shutdown_code )
     {
     case SHUTDOWN_suspend:
-        vcpu_block_unless_event_pending(current);
+        //vcpu_block_unless_event_pending(current);
         break;
     default:
         break;

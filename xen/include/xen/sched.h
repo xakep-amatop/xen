@@ -1004,6 +1004,8 @@ static inline struct domain *next_domain_in_cpupool(
 /* VCPU is parked. */
 #define _VPF_parked          8
 #define VPF_parked           (1UL<<_VPF_parked)
+#define _VPF_suspended       9
+#define VPF_suspended           (1UL<<_VPF_suspended)
 
 static inline bool vcpu_runnable(const struct vcpu *v)
 {

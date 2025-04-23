@@ -11,9 +11,9 @@
 #include <public/sched.h>
 
 static int do_common_cpu_set_info(struct vcpu *v, register_t entry_point,
-                                  register_t context_id)
+                                  register_t context_id, bool online)
 {
-    struct domain *d = current->domain;
+    struct domain *d = v->domain;
     struct vcpu_guest_context *ctxt;
     int rc;
     bool is_thumb = entry_point & 1;
@@ -55,7 +55,7 @@ static int do_common_cpu_set_info(struct vcpu *v, register_t entry_point,
         ctxt->user_regs.x0 = context_id;
     }
 #endif
-    ctxt->flags = VGCF_online;
+    ctxt->flags = online ? VGCF_online : 0;
 
     domain_lock(d);
     rc = arch_set_info_guest(v, ctxt);
@@ -74,9 +74,7 @@ static int do_common_cpu_on(register_t target_cpu, register_t entry_point,
 {
     struct vcpu *v;
     struct domain *d = current->domain;
-    struct vcpu_guest_context *ctxt;
     int rc;
-    bool is_thumb = entry_point & 1;
     register_t vcpuid;
 
     vcpuid = vaffinity_to_vcpuid(target_cpu);
@@ -89,7 +87,7 @@ static int do_common_cpu_on(register_t target_cpu, register_t entry_point,
 
     vgic_clear_pending_irqs(v);
 
-    rc = do_common_cpu_set_info(v, entry_point, context_id);
+    rc = do_common_cpu_set_info(v, entry_point, context_id, true);
     if ( rc )
         return rc;
 
@@ -214,14 +212,12 @@ static void do_psci_0_2_system_reset(void)
 
 static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
 {
-#ifdef CONFIG_SYSTEM_SUSPEND
     int rc;
-    struct vcpu *v = current;
+    struct vcpu *v;
     struct domain *d = current->domain;
 
-    dprintk(XENLOG_DEBUG,
-            "Dom%d suspend: epoint=0x%"PRIregister", cid=0x%"PRIregister"\n",
-            d->domain_id, epoint, cid);
+    printk("Dom%d suspend: epoint=0x%"PRIregister", cid=0x%"PRIregister"\n",
+           current->domain->domain_id, epoint, cid);
 
     /* Ensure that all CPUs other than the calling one are offline */
     for_each_vcpu ( d, v )
@@ -230,16 +226,15 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
             return PSCI_DENIED;
     }
 
-    rc = do_common_cpu_set_info(v, epoint, cid);
+    domain_shutdown(current->domain, SHUTDOWN_suspend);
+
+    rc = do_common_cpu_set_info(current, epoint, cid, true);
     if ( rc )
         return rc;
 
-    domain_shutdown(current->domain, SHUTDOWN_suspend);
+    set_bit(_VPF_suspended, &current->pause_flags);
 
     return PSCI_SUCCESS;
-#else
-    return PSCI_NOT_SUPPORTED;
-#endif
 }
 
 static int32_t do_psci_1_0_features(uint32_t psci_func_id)

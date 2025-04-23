@@ -1288,8 +1288,8 @@ int domain_shutdown(struct domain *d, u8 reason)
         d->shutdown_code = reason;
     reason = d->shutdown_code;
 
-    if ( is_hardware_domain(d) )
-        hwdom_shutdown(reason);
+    //if ( is_hardware_domain(d) )
+        //hwdom_shutdown(reason);
 
     if ( d->is_shutting_down )
     {
@@ -1307,6 +1307,7 @@ int domain_shutdown(struct domain *d, u8 reason)
             v->defer_shutdown = 0;
         else if ( v->defer_shutdown )
             continue;
+
         vcpu_pause_nosync(v);
         v->paused_for_shutdown = 1;
     }
@@ -1323,6 +1324,8 @@ int domain_shutdown(struct domain *d, u8 reason)
 void domain_resume(struct domain *d)
 {
     struct vcpu *v;
+
+    printk("RESUME DOMAIN\n");
 
     /*
      * Some code paths assume that shutdown status does not get reset under
