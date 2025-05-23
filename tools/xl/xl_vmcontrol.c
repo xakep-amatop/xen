@@ -32,6 +32,24 @@
 
 static int fd_lock = -1;
 
+static void resume_domain(uint32_t domid)
+{
+    libxl_domain_resume(ctx, domid, 1, NULL);
+}
+
+int main_resume(int argc, char **argv)
+{
+    int opt;
+
+    SWITCH_FOREACH_OPT(opt, "", NULL, "resume", 1) {
+        /* No options */
+    }
+
+    resume_domain(find_domain(argv[optind]));
+
+    return EXIT_SUCCESS;
+}
+
 static void pause_domain(uint32_t domid)
 {
     libxl_domain_pause(ctx, domid, NULL);
