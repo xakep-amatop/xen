@@ -29,7 +29,7 @@
 #include "xl_utils.h"
 #include "xl_parse.h"
 
-#ifndef LIBXL_HAVE_NO_SUSPEND_RESUME
+#ifndef LIBXL_HAVE_NO_SUSPEND
 
 void save_domain_core_begin(uint32_t domid,
                             int preserve_domid,
@@ -270,7 +270,7 @@ int main_save(int argc, char **argv)
     return EXIT_SUCCESS;
 }
 
-#endif /* LIBXL_HAVE_NO_SUSPEND_RESUME */
+#endif /* !LIBXL_HAVE_NO_SUSPEND */
 
 
 

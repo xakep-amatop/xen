@@ -32,15 +32,10 @@
 
 static int fd_lock = -1;
 
-#ifndef LIBXL_HAVE_NO_SUSPEND_RESUME
+#ifndef LIBXL_HAVE_NO_SUSPEND
 static void suspend_domain(uint32_t domid)
 {
     libxl_domain_suspend_only(ctx, domid, NULL);
-}
-
-static void resume_domain(uint32_t domid)
-{
-    libxl_domain_resume(ctx, domid, 1, NULL);
 }
 
 int main_suspend(int argc, char **argv)
@@ -55,6 +50,12 @@ int main_suspend(int argc, char **argv)
 
     return EXIT_SUCCESS;
 }
+#endif /* !LIBXL_HAVE_NO_SUSPEND */
+
+static void resume_domain(uint32_t domid)
+{
+    libxl_domain_resume(ctx, domid, 1, NULL);
+}
 
 int main_resume(int argc, char **argv)
 {
@@ -68,7 +69,6 @@ int main_resume(int argc, char **argv)
 
     return EXIT_SUCCESS;
 }
-#endif
 
 static void pause_domain(uint32_t domid)
 {
