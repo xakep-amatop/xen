@@ -73,6 +73,12 @@ For the Cortex A77 r0p0 - r1p0, see Errata 1508412.
     Status, x86 PV: Supported
     Status, ARM: Experimental
 
+### ARM/PSCI
+
+    Status: Supported
+
+SYSTEM_SUSPEND is not yet supported.
+
 ### Host EFI Boot
 
     Status, x86: Supported
@@ -945,6 +951,15 @@ transport ("arm,scmi-smc" compatible only) to reach EL3 Firmware if issued
 by hwdom. Some platforms use SCMI for access to system-level resources.
 
     Status: Supported
+
+### Arm: vPSCI (virtual PSCI interface for guests)
+
+Emulated PSCI interface exposed to guests to support CPU_ON, CPU_OFF,
+SYSTEM_RESET, SYSTEM_OFF, etc.
+
+    Status: Supported
+
+SYSTEM_SUSPEND is not yet supported for hardware domain.
 
 ## Virtual Hardware, QEMU
 
