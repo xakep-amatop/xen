@@ -42,6 +42,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
     - Ability to enable stack protector
     - GICv3.1 eSPI (Extended Shared Peripheral Interrupts) support for Xen
       and guest domains.
+    - Support for guest suspend and resume to/from RAM via vPSCI.
+      Applies only to non-hardware domain guests.
 
 ### Removed
  - On x86:
