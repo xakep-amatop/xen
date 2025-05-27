@@ -964,6 +964,7 @@ implemented and their status.
 
    Status, Mandatory: Supported
    Status, MIGRATE_INFO_TYPE: Supported
+   Status, SYSTEM_SUSPEND: Experimental
 
 ## Virtual Hardware, QEMU
 
