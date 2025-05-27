@@ -956,6 +956,13 @@ by hwdom. Some platforms use SCMI for access to system-level resources.
 
     Status: Supported
 
+### ARM: Guest PSCI SYSTEM_SUSPEND support
+
+Support for the optional PSCI SYSTEM_SUSPEND function exposed via vPSCI.
+Allows non-hardware domain guests to initiate a system suspend.
+
+    Status: Experimental
+
 ## Virtual Hardware, QEMU
 
 This section describes supported devices available in HVM mode using a
