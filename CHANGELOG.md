@@ -26,6 +26,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
  - On Arm:
     - Ability to enable stack protector
+    - Add support for guest suspend/resume to/from RAM via vPSCI on Arm (both
+      ARM32 and ARM64). This does not apply to the hardware domain.
 
 ### Removed
  - On x86:
