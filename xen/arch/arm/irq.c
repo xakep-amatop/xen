@@ -158,6 +158,42 @@ static int init_local_irq_data(unsigned int cpu)
     return 0;
 }
 
+/*
+ * The first 32 interrupts (PPIs and SGIs) are per-CPU,
+ * so call this function on the target CPU to restore them.
+ *
+ * SPIs are restored via gic_resume.
+ */
+static void restore_local_irqs_on_resume(void)
+{
+    unsigned int irq;
+
+    spin_lock(&local_irqs_type_lock);
+
+    for ( irq = 0; irq < NR_LOCAL_IRQS; irq++ )
+    {
+        unsigned int prio = (irq < NR_GIC_SGI) ? GIC_PRI_IPI : GIC_PRI_IRQ;
+        struct irq_desc *desc = irq_to_desc(irq);
+
+        spin_lock(&desc->lock);
+
+        if ( test_bit(_IRQ_DISABLED, &desc->status) )
+        {
+            spin_unlock(&desc->lock);
+            continue;
+        }
+
+        /* Disable the IRQ to avoid assertions in the following calls */
+        desc->handler->disable(desc);
+        gic_route_irq_to_xen(desc, prio);
+        desc->handler->startup(desc);
+
+        spin_unlock(&desc->lock);
+    }
+
+    spin_unlock(&local_irqs_type_lock);
+}
+
 static int cpu_callback(struct notifier_block *nfb, unsigned long action,
                         void *hcpu)
 {
@@ -175,6 +211,10 @@ static int cpu_callback(struct notifier_block *nfb, unsigned long action,
         if ( rc )
             printk(XENLOG_ERR "Unable to allocate local IRQ for CPU%u\n",
                    cpu);
+        break;
+    case CPU_STARTING:
+        if ( system_state == SYS_STATE_resume )
+            restore_local_irqs_on_resume();
         break;
     }
 
