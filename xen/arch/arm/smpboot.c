@@ -398,6 +398,8 @@ void asmlinkage start_secondary(void)
     init_timer_interrupt();
     init_tee_secondary();
 
+    restore_local_irqs_on_resume();
+
     local_abort_enable();
 
     check_local_cpu_errata();
