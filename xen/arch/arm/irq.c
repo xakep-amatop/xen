@@ -169,6 +169,10 @@ static int cpu_callback(struct notifier_block *nfb, unsigned long action,
     switch ( action )
     {
     case CPU_UP_PREPARE:
+        /* Skip local IRQ cleanup on resume */
+        if ( system_state == SYS_STATE_resume )
+            break;
+
         rc = init_local_irq_data(cpu);
         if ( rc )
             printk(XENLOG_ERR "Unable to allocate local IRQ for CPU%u\n",
