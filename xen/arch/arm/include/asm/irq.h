@@ -88,6 +88,8 @@ bool irq_type_set_by_domain(const struct domain *d);
 void irq_end_none(struct irq_desc *irq);
 #define irq_end_none irq_end_none
 
+void restore_local_irqs_on_resume(void);
+
 #endif /* _ASM_HW_IRQ_H */
 /*
  * Local variables:

@@ -39,6 +39,8 @@ cscope.po.out
 .vscode
 
 dist
+patch
+xen-uImage
 
 autom4te.cache/
 automation/build/yocto/*.dockerfile
