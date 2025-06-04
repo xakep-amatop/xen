@@ -202,16 +202,6 @@ static void __init scif_uart_init_postirq(struct serial_port *port)
                 params->irq_flags);
 }
 
-static void scif_uart_suspend(struct serial_port *port)
-{
-    BUG();
-}
-
-static void scif_uart_resume(struct serial_port *port)
-{
-    BUG();
-}
-
 static int scif_uart_tx_ready(struct serial_port *port)
 {
     struct scif_uart *uart = port->uart;

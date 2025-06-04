@@ -215,11 +215,13 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
     struct vcpu *v;
     struct domain *d = current->domain;
 
+    printk("%s:%d\n", __func__, __LINE__);
 #ifndef CONFIG_SYSTEM_SUSPEND
     if ( is_hardware_domain(d) )
         return PSCI_NOT_SUPPORTED;
 #endif
 
+    printk("%s:%d\n", __func__, __LINE__);
     /* Ensure that all CPUs other than the calling one are offline */
     domain_lock(d);
     for_each_vcpu ( d, v )
@@ -232,9 +234,13 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
     }
     domain_unlock(d);
 
+    printk("%s:%d\n", __func__, __LINE__);
+
     rc = domain_shutdown(d, SHUTDOWN_suspend);
     if ( rc )
         return PSCI_DENIED;
+
+    printk("%s:%d\n", __func__, __LINE__);
 
 #ifdef CONFIG_SYSTEM_SUSPEND
     if ( is_hardware_domain(d) && host_system_suspend() )
@@ -244,12 +250,16 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
     }
 #endif
 
+    printk("%s:%d\n", __func__, __LINE__);
+
     rc = do_setup_vcpu_ctx(current, epoint, cid);
     if ( rc != PSCI_SUCCESS )
     {
         domain_resume_nopause(d);
         return rc;
     }
+
+    printk("%s:%d\n", __func__, __LINE__);
 
     set_bit(_VPF_suspended, &current->pause_flags);
 

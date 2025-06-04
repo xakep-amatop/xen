@@ -4,7 +4,6 @@
 #include <asm/suspend.h>
 #include <xen/console.h>
 #include <xen/cpu.h>
-#include <xen/llc-coloring.h>
 #include <xen/sched.h>
 
 /*
@@ -74,7 +73,7 @@ static long system_suspend(void *data)
      * Enable identity mapping before entering suspend to simplify
      * the resume path
      */
-    update_boot_mapping(true);
+    update_identity_mapping(true);
 
     if ( hyp_suspend(&cpu_context) )
     {
@@ -95,7 +94,7 @@ static long system_suspend(void *data)
     }
 
     system_state = SYS_STATE_resume;
-    update_boot_mapping(false);
+    update_identity_mapping(false);
 
  resume_console:
     console_resume();
