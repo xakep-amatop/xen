@@ -1340,10 +1340,19 @@ int domain_shutdown(struct domain *d, u8 reason)
     }
 
     ret = arch_domain_shutdown(d);
+    if ( ret )
+        goto shutdown_error;
 
     __domain_finalise_shutdown(d);
 
     spin_unlock(&d->shutdown_lock);
+
+    return 0;
+
+ shutdown_error:
+    spin_unlock(&d->shutdown_lock);
+
+    domain_resume(d);
 
     return ret;
 }
