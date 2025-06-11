@@ -77,6 +77,9 @@ config HAS_PMAP
 config HAS_SCHED_GRANULARITY
 	bool
 
+config HAS_SYSTEM_SUSPEND
+	bool
+
 config HAS_UBSAN
 	bool
 
@@ -492,5 +495,20 @@ config TRACEBUFFER
 	  This will allow live information about Xen's execution and performance
 	  to be collected at run time for debugging or performance analysis.
 	  Memory and execution overhead when not active is minimal.
+
+config SYSTEM_SUSPEND_ALWAYS_ON
+	bool
+	select HAS_SYSTEM_SUSPEND
+
+config SYSTEM_SUSPEND
+	bool "System suspend support" if !SYSTEM_SUSPEND_ALWAYS_ON
+	depends on HAS_SYSTEM_SUSPEND
+	default y
+	help
+	  This option enables the system suspend support. This is the
+	  mechanism that allows the system to be suspended to RAM and
+	  later resumed.
+
+	  If unsure, say N.
 
 endmenu
