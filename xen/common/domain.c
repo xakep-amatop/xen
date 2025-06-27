@@ -1281,6 +1281,7 @@ void __domain_crash(struct domain *d)
 
 int domain_shutdown(struct domain *d, u8 reason)
 {
+    int ret;
     struct vcpu *v;
 
 #ifdef CONFIG_X86
@@ -1317,13 +1318,20 @@ int domain_shutdown(struct domain *d, u8 reason)
         v->paused_for_shutdown = 1;
     }
 
-    arch_domain_shutdown(d);
+    ret = arch_domain_shutdown(d);
+    if ( ret )
+        goto arch_shutdown_exit;
 
     __domain_finalise_shutdown(d);
 
     spin_unlock(&d->shutdown_lock);
 
     return 0;
+
+ arch_shutdown_exit:
+    spin_unlock(&d->shutdown_lock);
+    domain_resume(d);
+    return ret;
 }
 
 void domain_resume(struct domain *d)

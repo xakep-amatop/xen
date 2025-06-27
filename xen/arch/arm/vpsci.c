@@ -197,6 +197,21 @@ static void do_psci_0_2_system_reset(void)
     domain_shutdown(d,SHUTDOWN_reboot);
 }
 
+static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
+{
+    struct domain *d = current->domain;
+
+    /* Drop this check once SYSTEM_SUSPEND is supported in hardware domain */
+    if ( is_hardware_domain(d) )
+        return PSCI_NOT_SUPPORTED;
+
+    /*
+     * Treat system suspend as standby to simplify Xen's implementation.
+     * See: Arm PSCI (DEN0022F.b), sections 5.20.2, 5.4.5, and 5.4.9.
+     */
+    return domain_shutdown(d, SHUTDOWN_suspend) ? PSCI_DENIED : PSCI_SUCCESS;
+}
+
 static int32_t do_psci_1_0_features(uint32_t psci_func_id)
 {
     /* /!\ Ordered by function ID and not name */
@@ -214,6 +229,8 @@ static int32_t do_psci_1_0_features(uint32_t psci_func_id)
     case PSCI_0_2_FN32_SYSTEM_OFF:
     case PSCI_0_2_FN32_SYSTEM_RESET:
     case PSCI_1_0_FN32_PSCI_FEATURES:
+    case PSCI_1_0_FN32_SYSTEM_SUSPEND:
+    case PSCI_1_0_FN64_SYSTEM_SUSPEND:
     case ARM_SMCCC_VERSION_FID:
         return 0;
     default:
@@ -341,6 +358,17 @@ bool do_vpsci_0_2_call(struct cpu_user_regs *regs, uint32_t fid)
 
         perfc_incr(vpsci_features);
         PSCI_SET_RESULT(regs, do_psci_1_0_features(psci_func_id));
+        return true;
+    }
+
+    case PSCI_1_0_FN32_SYSTEM_SUSPEND:
+    case PSCI_1_0_FN64_SYSTEM_SUSPEND:
+    {
+        register_t epoint = PSCI_ARG(regs,1);
+        register_t cid = PSCI_ARG(regs,2);
+
+        perfc_incr(vpsci_system_suspend);
+        PSCI_SET_RESULT(regs, do_psci_1_0_system_suspend(epoint, cid));
         return true;
     }
 
