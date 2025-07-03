@@ -6,6 +6,8 @@
 #include <xen/sched.h>
 #include <xen/softirq.h>
 
+#include <public/sched.h>
+
 #include <asm/alternative.h>
 #include <asm/event.h>
 #include <asm/flushtlb.h>
@@ -198,7 +200,9 @@ void dump_p2m_lookup(struct domain *d, paddr_t addr)
  */
 void p2m_save_state(struct vcpu *p)
 {
-    p->arch.sctlr = READ_SYSREG(SCTLR_EL1);
+    if ( !(p->domain->is_shutting_down &&
+           p->domain->shutdown_code == SHUTDOWN_suspend) )
+        p->arch.sctlr = READ_SYSREG(SCTLR_EL1);
 
     if ( cpus_have_const_cap(ARM64_WORKAROUND_AT_SPECULATE) )
     {
