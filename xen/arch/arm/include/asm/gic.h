@@ -395,6 +395,10 @@ struct gic_hw_operations {
     int (*iomem_deny_access)(struct domain *d);
     /* Handle LPIs, which require special handling */
     void (*do_LPI)(unsigned int lpi);
+#ifdef CONFIG_SYSTEM_SUSPEND
+    int (*suspend)(void);
+    void (*resume)(void);
+#endif
 };
 
 extern const struct gic_hw_operations *gic_hw_ops;

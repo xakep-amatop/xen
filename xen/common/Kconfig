@@ -600,6 +600,7 @@ config BUDDY_ALLOCATOR_SIZE
 config SYSTEM_SUSPEND_ALWAYS_ON
 	bool
 	select HAS_SYSTEM_SUSPEND
+	default y
 
 config SYSTEM_SUSPEND
 	bool "System suspend support" if !SYSTEM_SUSPEND_ALWAYS_ON
