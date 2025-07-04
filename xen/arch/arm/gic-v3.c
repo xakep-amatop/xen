@@ -1778,6 +1778,231 @@ static bool gic_dist_supports_lpis(void)
     return (readl_relaxed(GICD + GICD_TYPER) & GICD_TYPE_LPIS);
 }
 
+#ifdef CONFIG_SYSTEM_SUSPEND
+
+/* GICv3 registers to be saved/restored on system suspend/resume */
+struct gicv3_ctx {
+    struct dist_ctx {
+        uint32_t ctlr;
+        /*
+         * This struct represent block of 32 IRQs
+         * TODO: store extended SPI configuration (GICv3.1+)
+         */
+        struct irq_regs {
+            uint32_t icfgr[2];
+            uint32_t ipriorityr[8];
+            uint64_t irouter[32];
+            uint32_t isactiver;
+            uint32_t isenabler;
+        } *irqs;
+    } dist;
+
+    /* have only one rdist structure for last running CPU during suspend */
+    struct redist_ctx {
+        uint32_t ctlr;
+        /* TODO: handle case when we have more than 16 PPIs (GICv3.1+) */
+        uint32_t icfgr[2];
+        uint32_t igroupr;
+        uint32_t ipriorityr[8];
+        uint32_t isactiver;
+        uint32_t isenabler;
+    } rdist;
+
+    struct cpu_ctx {
+        uint32_t ctlr;
+        uint32_t pmr;
+        uint32_t bpr;
+        uint32_t sre_el2;
+        uint32_t grpen;
+    } cpu;
+};
+
+static struct gicv3_ctx gicv3_ctx;
+
+static void __init gicv3_alloc_context(void)
+{
+    uint32_t blocks = DIV_ROUND_UP(gicv3_info.nr_lines, 32);
+
+    if ( gicv3_its_host_has_its() )
+        return;
+
+    /* according to spec it is possible don't have SPIs */
+    if ( blocks == 1 )
+        return;
+
+    gicv3_ctx.dist.irqs = xzalloc_array(typeof(*gicv3_ctx.dist.irqs), blocks - 1);
+    if ( !gicv3_ctx.dist.irqs )
+        dprintk(XENLOG_ERR,
+                "%s:%d: failed to allocate memory for GICv3 suspend context\n",
+                __func__, __LINE__);
+}
+
+static void gicv3_disable_redist(void)
+{
+    void __iomem* waker = GICD_RDIST_BASE + GICR_WAKER;
+
+    writel_relaxed(readl_relaxed(waker) | GICR_WAKER_ProcessorSleep, waker);
+    while ( (readl_relaxed(waker) & GICR_WAKER_ChildrenAsleep) == 0 );
+}
+
+static int gicv3_suspend(void)
+{
+    unsigned int i;
+    void __iomem *base;
+    typeof(gicv3_ctx.rdist)* rdist = &gicv3_ctx.rdist;
+
+    /* TODO: implement support for ITS */
+    if ( gicv3_its_host_has_its() )
+        return -EOPNOTSUPP;
+
+    if ( !gicv3_ctx.dist.irqs && gicv3_info.nr_lines > NR_GIC_LOCAL_IRQS )
+    {
+        dprintk(XENLOG_WARNING,
+                "%s:%d: GICv3 suspend context is not allocated!\n",
+                __func__, __LINE__);
+        return -ENOMEM;
+    }
+
+    gicv3_save_state(current);
+
+    /* Save GICC configuration */
+    gicv3_ctx.cpu.ctlr     = READ_SYSREG(ICC_CTLR_EL1);
+    gicv3_ctx.cpu.pmr      = READ_SYSREG(ICC_PMR_EL1);
+    gicv3_ctx.cpu.bpr      = READ_SYSREG(ICC_BPR1_EL1);
+    gicv3_ctx.cpu.sre_el2  = READ_SYSREG(ICC_SRE_EL2);
+    gicv3_ctx.cpu.grpen    = READ_SYSREG(ICC_IGRPEN1_EL1);
+
+    gicv3_disable_interface();
+    gicv3_disable_redist();
+
+    /* Save GICR configuration */
+    gicv3_redist_wait_for_rwp();
+
+    base = GICD_RDIST_SGI_BASE;
+
+    rdist->ctlr = readl_relaxed(base + GICR_CTLR);
+
+    /* Set priority on PPI and SGI interrupts */
+    for (i = 0; i < NR_GIC_LOCAL_IRQS / 4; i += 4)
+        rdist->ipriorityr[i] = readl_relaxed(base + GICR_IPRIORITYR0 + 4 * i);
+
+    rdist->isactiver = readl_relaxed(base + GICR_ISACTIVER0);
+    rdist->isenabler = readl_relaxed(base + GICR_ISENABLER0);
+    rdist->igroupr   = readl_relaxed(base + GICR_IGROUPR0);
+    rdist->icfgr[0]  = readl_relaxed(base + GICR_ICFGR0);
+    rdist->icfgr[1]  = readl_relaxed(base + GICR_ICFGR1);
+
+    /* Save GICD configuration */
+    gicv3_dist_wait_for_rwp();
+    gicv3_ctx.dist.ctlr = readl_relaxed(GICD + GICD_CTLR);
+
+    for ( i = 1; i < DIV_ROUND_UP(gicv3_info.nr_lines, 32); i++ )
+    {
+        typeof(gicv3_ctx.dist.irqs) irqs = gicv3_ctx.dist.irqs + i - 1;
+        unsigned int irq;
+
+        base = GICD + GICD_ICFGR + 8 * i;
+        irqs->icfgr[0] = readl_relaxed(base);
+        irqs->icfgr[1] = readl_relaxed(base + 4);
+
+        base = GICD + GICD_IPRIORITYR + 32 * i;
+        for ( irq = 0; irq < 8; irq++ )
+            irqs->ipriorityr[irq] = readl_relaxed(base + 4 * irq);
+
+        base = GICD + GICD_IROUTER + 32 * i;
+        for ( irq = 0; irq < 32; irq++ )
+            irqs->irouter[irq] = readq_relaxed_non_atomic(base + 8 * irq);
+
+        irqs->isactiver = readl_relaxed(GICD + GICD_ISACTIVER + 4 * i);
+        irqs->isenabler = readl_relaxed(GICD + GICD_ISENABLER + 4 * i);
+    }
+
+    return 0;
+}
+
+static void gicv3_resume(void)
+{
+    unsigned int i;
+    void __iomem *base;
+    typeof(gicv3_ctx.rdist)* rdist = &gicv3_ctx.rdist;
+
+    if ( !gicv3_ctx.dist.irqs && gicv3_info.nr_lines > NR_GIC_LOCAL_IRQS )
+    {
+        dprintk(XENLOG_WARNING, "%s:%d: GICv3 suspend context not allocated!\n",
+            __func__, __LINE__);
+        return;
+    }
+
+    writel_relaxed(0, GICD + GICD_CTLR);
+
+    for ( i = NR_GIC_LOCAL_IRQS; i < gicv3_info.nr_lines; i += 32 )
+        writel_relaxed(GENMASK(31, 0), GICD + GICD_IGROUPR + (i / 32) * 4);
+
+    for ( i = 1; i < DIV_ROUND_UP(gicv3_info.nr_lines, 32); i++ )
+    {
+        typeof(gicv3_ctx.dist.irqs) irqs = gicv3_ctx.dist.irqs + i - 1;
+        unsigned int irq;
+
+        base = GICD + GICD_ICFGR + 8 * i;
+        writel_relaxed(irqs->icfgr[0], base);
+        writel_relaxed(irqs->icfgr[1], base + 4);
+
+        base = GICD + GICD_IPRIORITYR + 32 * i;
+        for ( irq = 0; irq < 8; irq++ )
+            writel_relaxed(irqs->ipriorityr[irq], base + 4 * irq );
+
+        base = GICD + GICD_IROUTER + 32 * i;
+        for ( irq = 0; irq < 32; irq++ )
+            writeq_relaxed_non_atomic(irqs->irouter[irq], base + 8 * irq);
+
+        writel_relaxed(irqs->isenabler, GICD + GICD_ISENABLER + i * 4);
+        writel_relaxed(irqs->isactiver, GICD + GICD_ISACTIVER + i * 4);
+    }
+
+    writel_relaxed(gicv3_ctx.dist.ctlr, GICD + GICD_CTLR);
+    gicv3_dist_wait_for_rwp();
+
+    /* Restore GICR (Redistributor) configuration */
+    gicv3_enable_redist();
+
+    base = GICD_RDIST_SGI_BASE;
+
+    writel_relaxed(0xffffffff, base + GICR_ICENABLER0);
+    gicv3_redist_wait_for_rwp();
+
+    for (i = 0; i < NR_GIC_LOCAL_IRQS / 4; i += 4)
+        writel_relaxed(rdist->ipriorityr[i], base + GICR_IPRIORITYR0 + i * 4);
+
+    writel_relaxed(rdist->isactiver, base + GICR_ISACTIVER0);
+
+    writel_relaxed(rdist->igroupr,  base + GICR_IGROUPR0);
+    writel_relaxed(rdist->icfgr[0], base + GICR_ICFGR0);
+    writel_relaxed(rdist->icfgr[1], base + GICR_ICFGR1);
+
+    gicv3_redist_wait_for_rwp();
+
+    writel_relaxed(rdist->isenabler, base + GICR_ISENABLER0);
+    writel_relaxed(rdist->ctlr, GICD_RDIST_BASE + GICR_CTLR);
+
+    gicv3_redist_wait_for_rwp();
+
+    WRITE_SYSREG(gicv3_ctx.cpu.sre_el2, ICC_SRE_EL2);
+    isb();
+
+    /* Restore CPU interface (System registers) */
+    WRITE_SYSREG(gicv3_ctx.cpu.pmr,   ICC_PMR_EL1);
+    WRITE_SYSREG(gicv3_ctx.cpu.bpr,   ICC_BPR1_EL1);
+    WRITE_SYSREG(gicv3_ctx.cpu.ctlr,  ICC_CTLR_EL1);
+    WRITE_SYSREG(gicv3_ctx.cpu.grpen, ICC_IGRPEN1_EL1);
+    isb();
+
+    gicv3_hyp_init();
+
+    gicv3_restore_state(current);
+}
+
+#endif /* CONFIG_SYSTEM_SUSPEND */
+
 /* Set up the GIC */
 static int __init gicv3_init(void)
 {
@@ -1852,6 +2077,10 @@ static int __init gicv3_init(void)
 
     gicv3_hyp_init();
 
+#ifdef CONFIG_SYSTEM_SUSPEND
+    gicv3_alloc_context();
+#endif
+
 out:
     spin_unlock(&gicv3.lock);
 
@@ -1891,6 +2120,10 @@ static const struct gic_hw_operations gicv3_ops = {
 #endif
     .iomem_deny_access   = gicv3_iomem_deny_access,
     .do_LPI              = gicv3_do_LPI,
+#ifdef CONFIG_SYSTEM_SUSPEND
+    .suspend             = gicv3_suspend,
+    .resume              = gicv3_resume,
+#endif
 };
 
 static int __init gicv3_dt_preinit(struct dt_device_node *node, const void *data)
