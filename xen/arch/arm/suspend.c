@@ -20,6 +20,8 @@
 
 struct cpu_context cpu_context;
 
+int debug_mask = 0;
+
 /* Xen suspend. Note: data is not used (suspend is the suspend to RAM) */
 static long system_suspend(void *data)
 {
@@ -50,6 +52,7 @@ static long system_suspend(void *data)
     time_suspend();
 
     local_irq_save(flags);
+    gic_disable_cpu();
     status = gic_suspend();
     if ( status )
     {
@@ -94,6 +97,7 @@ static long system_suspend(void *data)
             dprintk(XENLOG_WARNING, "PSCI system suspend failed, err=%d\n", status);
     }
 
+    debug_mask = 1;
     system_state = SYS_STATE_resume;
     update_boot_mapping(false);
 
@@ -102,6 +106,7 @@ static long system_suspend(void *data)
     console_end_sync();
 
     gic_resume();
+    gic_init_secondary_cpu();
 
  resume_irqs:
     local_irq_restore(flags);

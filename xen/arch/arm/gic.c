@@ -333,6 +333,8 @@ static void do_static_sgi(struct cpu_user_regs *regs, enum gic_sgi sgi)
     gic_hw_ops->deactivate_irq(desc);
 }
 
+extern int debug_mask;
+
 /* Accept an interrupt from the GIC and dispatch its handler */
 void gic_interrupt(struct cpu_user_regs *regs, int is_fiq)
 {
@@ -341,6 +343,9 @@ void gic_interrupt(struct cpu_user_regs *regs, int is_fiq)
     do  {
         /* Reading IRQ will ACK it */
         irq = gic_hw_ops->read_irq();
+
+        if ( debug_mask )
+            printk("GIC: CPU%d: got IRQ %u (FIQ=%d)\n", smp_processor_id(), irq, is_fiq);
 
         if ( likely(irq >= GIC_SGI_STATIC_MAX && irq < 1020) )
         {
