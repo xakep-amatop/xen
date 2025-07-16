@@ -66,13 +66,24 @@ static always_inline void monitor(
     alternative_input("", "clflush (%[addr])", X86_BUG_CLFLUSH_MONITOR,
                       [addr] "a" (addr));
 
+    /*
+     * The memory clobber is a compiler barrier.  Subseqeunt reads from the
+     * monitored cacheline must not be reordered over MONITOR.
+     */
     asm volatile ( "monitor"
-                   :: "a" (addr), "c" (ecx), "d" (edx) );
+                   :: "a" (addr), "c" (ecx), "d" (edx) : "memory" );
 }
 
 static always_inline void mwait(unsigned int eax, unsigned int ecx)
 {
     asm volatile ( "mwait"
+                   :: "a" (eax), "c" (ecx) );
+}
+
+static always_inline void sti_mwait_cli(unsigned int eax, unsigned int ecx)
+{
+    /* STI shadow covers MWAIT. */
+    asm volatile ( "sti; mwait; cli"
                    :: "a" (eax), "c" (ecx) );
 }
 
@@ -436,71 +447,59 @@ static int __init cf_check cpu_idle_key_init(void)
 }
 __initcall(cpu_idle_key_init);
 
-/*
- * The bit is set iff cpu use monitor/mwait to enter C state
- * with this flag set, CPU can be waken up from C state
- * by writing to specific memory address, instead of sending an IPI.
- */
-static cpumask_t cpuidle_mwait_flags;
-
-void cpuidle_wakeup_mwait(cpumask_t *mask)
-{
-    cpumask_t target;
-    unsigned int cpu;
-
-    cpumask_and(&target, mask, &cpuidle_mwait_flags);
-
-    /* CPU is MWAITing on the cpuidle_mwait_wakeup flag. */
-    for_each_cpu(cpu, &target)
-        mwait_wakeup(cpu) = 0;
-
-    cpumask_andnot(mask, mask, &target);
-}
-
-/* Force sending of a wakeup IPI regardless of mwait usage. */
-bool __ro_after_init force_mwait_ipi_wakeup;
-
-bool arch_skip_send_event_check(unsigned int cpu)
-{
-    if ( force_mwait_ipi_wakeup )
-        return false;
-
-    /*
-     * This relies on softirq_pending() and mwait_wakeup() to access data
-     * on the same cache line.
-     */
-    smp_mb();
-    return !!cpumask_test_cpu(cpu, &cpuidle_mwait_flags);
-}
-
 void mwait_idle_with_hints(unsigned int eax, unsigned int ecx)
 {
     unsigned int cpu = smp_processor_id();
-    s_time_t expires = per_cpu(timer_deadline, cpu);
-    const void *monitor_addr = &mwait_wakeup(cpu);
-
-    monitor(monitor_addr, 0, 0);
-    smp_mb();
+    struct cpu_info *info = get_cpu_info();
+    irq_cpustat_t *stat = &irq_stat[cpu];
+    const unsigned int *this_softirq_pending = &stat->__softirq_pending;
 
     /*
-     * Timer deadline passing is the event on which we will be woken via
-     * cpuidle_mwait_wakeup. So check it now that the location is armed.
+     * Heuristic: if we're definitely not going to idle, bail early as the
+     * speculative safety can be expensive.  This is a performance
+     * consideration not a correctness issue.
      */
-    if ( (expires > NOW() || expires == 0) && !softirq_pending(cpu) )
+    if ( *this_softirq_pending )
+        return;
+
+    /*
+     * By setting in_mwait, we promise to other CPUs that we'll notice changes
+     * to __softirq_pending without being sent an IPI.  We achieve this by
+     * either not going to sleep, or by having hardware notice on our behalf.
+     *
+     * Some errata exist where MONITOR doesn't work properly, and the
+     * workaround is to force the use of an IPI.  Cause this to happen by
+     * simply not advertising ourselves as being in_mwait.
+     */
+    alternative_io("movb $1, %[in_mwait]",
+                   "", X86_BUG_MONITOR,
+                   [in_mwait] "=m" (stat->in_mwait));
+
+    /*
+     * On AMD systems, side effects from VERW cancel MONITOR, causing MWAIT to
+     * wake up immediately.  Therefore, VERW must come ahead of MONITOR.
+     */
+    __spec_ctrl_enter_idle_verw(info);
+
+    monitor(this_softirq_pending, 0, 0);
+
+    ASSERT(!local_irq_is_enabled());
+
+    if ( !*this_softirq_pending )
     {
-        struct cpu_info *info = get_cpu_info();
+        __spec_ctrl_enter_idle(info, false /* VERW handled above */);
 
-        cpumask_set_cpu(cpu, &cpuidle_mwait_flags);
+        if ( ecx & MWAIT_ECX_INTERRUPT_BREAK )
+            mwait(eax, ecx);
+        else
+            sti_mwait_cli(eax, ecx);
 
-        spec_ctrl_enter_idle(info);
-        mwait(eax, ecx);
         spec_ctrl_exit_idle(info);
-
-        cpumask_clear_cpu(cpu, &cpuidle_mwait_flags);
     }
 
-    if ( expires <= NOW() && expires > 0 )
-        raise_softirq(TIMER_SOFTIRQ);
+    alternative_io("movb $0, %[in_mwait]",
+                   "", X86_BUG_MONITOR,
+                   [in_mwait] "=m" (stat->in_mwait));
 }
 
 static void acpi_processor_ffh_cstate_enter(struct acpi_processor_cx *cx)
@@ -901,7 +900,7 @@ void cf_check acpi_dead_idle(void)
 
     if ( cx->entry_method == ACPI_CSTATE_EM_FFH )
     {
-        void *mwait_ptr = &mwait_wakeup(smp_processor_id());
+        void *mwait_ptr = &softirq_pending(smp_processor_id());
 
         /*
          * Cache must be flushed as the last operation before sleeping.
@@ -1490,6 +1489,7 @@ static void amd_cpuidle_init(struct acpi_processor_power *power)
         vendor_override = -1;
 }
 
+#ifdef CONFIG_PM_STATS
 uint32_t pmstat_get_cx_nr(unsigned int cpu)
 {
     return processor_powers[cpu] ? processor_powers[cpu]->count : 0;
@@ -1609,6 +1609,7 @@ int pmstat_reset_cx_stat(unsigned int cpu)
 {
     return 0;
 }
+#endif /* CONFIG_PM_STATS */
 
 void cpuidle_disable_deep_cstate(void)
 {

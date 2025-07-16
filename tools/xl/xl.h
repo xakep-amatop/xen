@@ -56,7 +56,7 @@ int create_domain(struct domain_create *dom_info);
 static const char savefileheader_magic[32]=
     "Xen saved domain, xl format\n \0 \r";
 
-#ifndef LIBXL_HAVE_NO_SUSPEND_RESUME
+#ifndef LIBXL_HAVE_NO_SUSPEND
 static const char migrate_receiver_banner[]=
     "xl migration receiver ready, send binary domain data.\n";
 static const char migrate_receiver_ready[]=
@@ -65,7 +65,7 @@ static const char migrate_permission_to_go[]=
     "domain is yours, you are cleared to unpause";
 static const char migrate_report[]=
     "my copy unpause results are as follows";
-#endif
+#endif /* !LIBXL_HAVE_NO_SUSPEND */
 
   /* followed by one byte:
    *     0: everything went well, domain is running
@@ -124,14 +124,14 @@ int main_pciattach(int argc, char **argv);
 int main_pciassignable_add(int argc, char **argv);
 int main_pciassignable_remove(int argc, char **argv);
 int main_pciassignable_list(int argc, char **argv);
-#ifndef LIBXL_HAVE_NO_SUSPEND_RESUME
+#ifndef LIBXL_HAVE_NO_SUSPEND
 int main_restore(int argc, char **argv);
 int main_migrate_receive(int argc, char **argv);
 int main_save(int argc, char **argv);
 int main_migrate(int argc, char **argv);
 int main_suspend(int argc, char **argv);
+#endif /* !LIBXL_HAVE_NO_SUSPEND */
 int main_resume(int argc, char **argv);
-#endif
 int main_dump_core(int argc, char **argv);
 int main_pause(int argc, char **argv);
 int main_unpause(int argc, char **argv);
@@ -202,7 +202,7 @@ int main_cpupoolnumasplit(int argc, char **argv);
 int main_getenforce(int argc, char **argv);
 int main_setenforce(int argc, char **argv);
 int main_loadpolicy(int argc, char **argv);
-#ifndef LIBXL_HAVE_NO_SUSPEND_RESUME
+#ifndef LIBXL_HAVE_NO_SUSPEND
 int main_remus(int argc, char **argv);
 #endif
 int main_devd(int argc, char **argv);

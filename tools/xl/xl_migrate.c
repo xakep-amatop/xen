@@ -30,7 +30,7 @@
 #include "xl_utils.h"
 #include "xl_parse.h"
 
-#ifndef LIBXL_HAVE_NO_SUSPEND_RESUME
+#ifndef LIBXL_HAVE_NO_SUSPEND
 
 static pid_t create_migration_child(const char *rune, int *send_fd,
                                         int *recv_fd)
@@ -767,7 +767,7 @@ int main_remus(int argc, char **argv)
     close(send_fd);
     return EXIT_FAILURE;
 }
-#endif
+#endif /* !LIBXL_HAVE_NO_SUSPEND */
 
 
 /*
