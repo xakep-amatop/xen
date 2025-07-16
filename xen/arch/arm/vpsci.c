@@ -233,19 +233,25 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
     struct vcpu *v;
     struct domain *d = current->domain;
 
-    /* Drop this check once SYSTEM_SUSPEND is supported in hardware domain */
+    /* SYSTEM_SUSPEND is not supported for the hardware domain yet */
     if ( is_hardware_domain(d) )
         return PSCI_NOT_SUPPORTED;
 
+    /*
+     * Shut down the domain first to ensure all vCPUs are paused
+     * before checking that they (except the calling one) are offline.
+     */
     domain_shutdown(d, SHUTDOWN_suspend);
 
     /* Ensure that all CPUs other than the calling one are offline */
     for_each_vcpu ( d, v )
+    {
         if ( v != current && is_vcpu_online(v) )
         {
             do_resume_on_error(d);
             return PSCI_DENIED;
         }
+    }
 
     ret = do_setup_vcpu_ctx(current, epoint, cid);
     if ( ret != PSCI_SUCCESS )
@@ -406,8 +412,15 @@ bool do_vpsci_0_2_call(struct cpu_user_regs *regs, uint32_t fid)
     case PSCI_1_0_FN32_SYSTEM_SUSPEND:
     case PSCI_1_0_FN64_SYSTEM_SUSPEND:
     {
-        register_t epoint = PSCI_ARG(regs,1);
-        register_t cid = PSCI_ARG(regs,2);
+        register_t epoint = PSCI_ARG(regs, 1);
+        register_t cid = PSCI_ARG(regs, 2);
+
+        if ( is_64bit_domain(current->domain) &&
+             fid == PSCI_1_0_FN32_SYSTEM_SUSPEND )
+        {
+            epoint &= GENMASK(31, 0);
+            cid &= GENMASK(31, 0);
+        }
 
         perfc_incr(vpsci_system_suspend);
         PSCI_SET_RESULT(regs, do_psci_1_0_system_suspend(epoint, cid));
