@@ -1282,6 +1282,7 @@ void __domain_crash(struct domain *d)
 int domain_shutdown(struct domain *d, u8 reason)
 {
     struct vcpu *v;
+    int ret;
 
 #ifdef CONFIG_X86
     if ( pv_shim )
@@ -1317,24 +1318,29 @@ int domain_shutdown(struct domain *d, u8 reason)
         v->paused_for_shutdown = 1;
     }
 
-    arch_domain_shutdown(d);
+    ret = arch_domain_shutdown(d);
+    if ( ret )
+        goto exit_unlock;
 
     __domain_finalise_shutdown(d);
 
     spin_unlock(&d->shutdown_lock);
 
     return 0;
+
+ exit_unlock:
+    spin_unlock(&d->shutdown_lock);
+    domain_resume_nopause(d);
+    return ret;
 }
 
-void domain_resume(struct domain *d)
+#ifdef CONFIG_ARM
+void domain_resume_nopause(struct domain *d)
+#else
+static void domain_resume_nopause(struct domain *d)
+#endif
 {
     struct vcpu *v;
-
-    /*
-     * Some code paths assume that shutdown status does not get reset under
-     * their feet (e.g., some assertions make this assumption).
-     */
-    domain_pause(d);
 
     spin_lock(&d->shutdown_lock);
 
@@ -1349,7 +1355,16 @@ void domain_resume(struct domain *d)
     }
 
     spin_unlock(&d->shutdown_lock);
+}
 
+void domain_resume(struct domain *d)
+{
+    /*
+     * Some code paths assume that shutdown status does not get reset under
+     * their feet (e.g., some assertions make this assumption).
+     */
+    domain_pause(d);
+    domain_resume_nopause(d);
     domain_unpause(d);
 }
 

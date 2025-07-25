@@ -121,6 +121,12 @@ struct arch_domain
     void *tee;
 #endif
 
+    struct {
+        register_t epoint;
+        register_t cid;
+        bool vpsci_call;
+    } suspend_ctx;
+
 }  __cacheline_aligned;
 
 struct arch_vcpu
