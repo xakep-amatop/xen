@@ -52,7 +52,6 @@ static long system_suspend(void *data)
     time_suspend();
 
     local_irq_save(flags);
-    gic_disable_cpu();
     status = gic_suspend();
     if ( status )
     {
@@ -106,7 +105,6 @@ static long system_suspend(void *data)
     console_end_sync();
 
     gic_resume();
-    gic_init_secondary_cpu();
 
  resume_irqs:
     local_irq_restore(flags);
