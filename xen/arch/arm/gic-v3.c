@@ -33,6 +33,8 @@
 #include <asm/io.h>
 #include <asm/sysregs.h>
 
+extern int debug_mask;
+
 /* Global state */
 static struct {
     void __iomem *map_dbase;  /* Mapped address of distributor registers */
@@ -1782,7 +1784,10 @@ static bool gic_dist_supports_lpis(void)
 struct gicv3_ctx {
     struct dist_ctx {
         uint32_t ctlr;
-        /* this struct represent block of 32 IRQs */
+        /*
+         * This struct represent block of 32 IRQs
+         * TODO: store extended SPI configuration (GICv3.1+)
+         */
         struct irq_regs {
             uint32_t icfgr[2];
             uint32_t igroupr;
@@ -1795,6 +1800,8 @@ struct gicv3_ctx {
 
     /* have only one rdist structure for last running CPU during suspend */
     struct redist_ctx {
+        uint32_t ctlr;
+        /* TODO: handle case when we have more than 16 PPIs (GICv3.1+) */
         uint32_t icfgr[2];
         uint32_t igroupr;
         uint32_t ipriorityr[8];
@@ -1811,7 +1818,7 @@ struct gicv3_ctx {
     } cpu;
 };
 
-static struct gicv3_ctx gicv3_ctx;
+static struct gicv3_ctx gicv3_ctx, gicv3_tmp_ctx;
 
 static void __init gicv3_alloc_context(void)
 {
@@ -1828,54 +1835,29 @@ static void __init gicv3_alloc_context(void)
                 __func__, __LINE__);
 }
 
+static void gicv3_disable_redist(void)
+{
+    void __iomem* waker = GICD_RDIST_BASE + GICR_WAKER;
+
+    writel_relaxed(readl_relaxed(waker) | GICR_WAKER_ProcessorSleep, waker);
+    while ( (readl_relaxed(waker) & GICR_WAKER_ChildrenAsleep) == 0 );
+}
+
 static int gicv3_suspend(void)
 {
     unsigned int i;
     void __iomem *base;
+    typeof(gicv3_ctx.rdist)* rdist = &gicv3_ctx.rdist;
 
     if ( !gicv3_ctx.dist.irqs && gicv3_info.nr_lines > NR_GIC_LOCAL_IRQS )
     {
-        dprintk(XENLOG_WARNING, "%s:%d: GICv3 suspend context not allocated!\n",
-            __func__, __LINE__);
+        dprintk(XENLOG_WARNING,
+                "%s:%d: GICv3 suspend context is not allocated!\n",
+                __func__, __LINE__);
         return -ENOMEM;
     }
 
-    spin_lock(&gicv3.lock);
-
-    /* Save GICD configuration */
-    gicv3_ctx.dist.ctlr = readl_relaxed(GICD + GICD_CTLR);
-
-    for ( i = 1; i < DIV_ROUND_UP(gicv3_info.nr_lines, 32); i++ )
-    {
-        typeof(gicv3_ctx.dist.irqs) irqs = gicv3_ctx.dist.irqs + i - 1;
-        unsigned int prio, irq;
-
-        irqs->icfgr[0] = readl_relaxed(GICD + GICD_ICFGR + (2 * i) * 4);
-        irqs->icfgr[1] = readl_relaxed(GICD + GICD_ICFGR + (2 * i + 1) * 4);
-
-        base = GICD + GICD_IPRIORITYR;
-        for ( prio = 0; prio < 8; prio++ )
-            irqs->ipriorityr[prio] = readl_relaxed(base + (i + prio) * 4);
-
-        for ( irq = 0; irq < 32; irq++ )
-            irqs->irouter[irq] = readq_relaxed_non_atomic(GICD + GICD_IROUTER + i * 32 + irq * 8);
-
-        irqs->isactiver = readl_relaxed(GICD + GICD_ISACTIVER + i * 4);
-        irqs->isenabler = readl_relaxed(GICD + GICD_ISENABLER + i * 4);
-    }
-
-    /* Save GICR configuration */
-    base = GICD_RDIST_SGI_BASE;
-
-    /* Set priority on PPI and SGI interrupts */
-    for (i = 0; i < NR_GIC_LOCAL_IRQS / 4; i += 4)
-        gicv3_ctx.rdist.ipriorityr[i] = readl_relaxed(base + GICR_IPRIORITYR0 + i * 4);
-
-    gicv3_ctx.rdist.isactiver = readl_relaxed(base + GICR_ISACTIVER0);
-    gicv3_ctx.rdist.isenabler = readl_relaxed(base + GICR_ISENABLER0);
-    gicv3_ctx.rdist.igroupr   = readl_relaxed(base + GICR_IGROUPR0);
-    gicv3_ctx.rdist.icfgr[0]  = readl_relaxed(base + GICR_ICFGR0);
-    gicv3_ctx.rdist.icfgr[1]  = readl_relaxed(base + GICR_ICFGR1);
+    gicv3_save_state(current);
 
     /* Save GICC configuration */
     gicv3_ctx.cpu.ctlr     = READ_SYSREG(ICC_CTLR_EL1);
@@ -1884,7 +1866,74 @@ static int gicv3_suspend(void)
     gicv3_ctx.cpu.sre_el2  = READ_SYSREG(ICC_SRE_EL2);
     gicv3_ctx.cpu.grpen    = READ_SYSREG(ICC_IGRPEN1_EL1);
 
-    spin_unlock(&gicv3.lock);
+    gicv3_disable_interface();
+    gicv3_disable_redist();
+
+    /* Save GICR configuration */
+    gicv3_redist_wait_for_rwp();
+
+    base = GICD_RDIST_SGI_BASE;
+
+    rdist->ctlr = readl_relaxed(base + GICR_CTLR);
+
+    /* Set priority on PPI and SGI interrupts */
+    for (i = 0; i < NR_GIC_LOCAL_IRQS / 4; i += 4)
+        rdist->ipriorityr[i] = readl_relaxed(base + GICR_IPRIORITYR0 + 4 * i);
+
+    rdist->isactiver = readl_relaxed(base + GICR_ISACTIVER0);
+    rdist->isenabler = readl_relaxed(base + GICR_ISENABLER0);
+    rdist->igroupr   = readl_relaxed(base + GICR_IGROUPR0);
+    rdist->icfgr[0]  = readl_relaxed(base + GICR_ICFGR0);
+    rdist->icfgr[1]  = readl_relaxed(base + GICR_ICFGR1);
+
+    /* Save GICD configuration */
+    gicv3_dist_wait_for_rwp();
+    gicv3_ctx.dist.ctlr = readl_relaxed(GICD + GICD_CTLR);
+
+    for ( i = 1; i < DIV_ROUND_UP(gicv3_info.nr_lines, 32); i++ )
+    {
+        typeof(gicv3_ctx.dist.irqs) irqs = gicv3_ctx.dist.irqs + i - 1;
+        unsigned int irq;
+
+        base = GICD + GICD_ICFGR + 8 * i;
+        irqs->icfgr[0] = readl_relaxed(base);
+        irqs->icfgr[1] = readl_relaxed(base + 4);
+
+        base = GICD + GICD_IPRIORITYR + 32 * i;
+        for ( irq = 0; irq < 8; irq++ )
+            irqs->ipriorityr[irq] = readl_relaxed(base + 4 * irq);
+
+        base = GICD + GICD_IROUTER + 32 * i;
+        for ( irq = 0; irq < 32; irq++ )
+            irqs->irouter[irq] = readq_relaxed_non_atomic(base + 8 * irq);
+
+        irqs->isactiver = readl_relaxed(GICD + GICD_ISACTIVER + 4 * i);
+        irqs->isenabler = readl_relaxed(GICD + GICD_ISENABLER + 4 * i);
+    }
+
+    if ( !debug_mask ) { 
+        printk("#############################\nBEFORE:\n");
+        for (i=0; i < sizeof(gicv3_ctx) / 4; i++)
+        {
+            printk("%08x ", *(((uint32_t *)&gicv3_ctx) + i));
+            if ( !((i+1) % 8) && i )
+                printk("\n");
+        }
+
+        for ( i = 1; i < DIV_ROUND_UP(gicv3_info.nr_lines, 32); i++ )
+        {
+            int j;
+            typeof(gicv3_ctx.dist.irqs) irqs = gicv3_ctx.dist.irqs + i - 1;
+
+            printk("\nIRQ Block %d:\n", i);
+            for (j = 0; j < sizeof(*irqs)/4; j++)
+            {
+                printk("%08x ", *(((uint32_t *)irqs) + j));
+                if ( !((j+1) % 8) && j )
+                    printk("\n");
+            }
+        }
+    }
 
     return 0;
 }
@@ -1893,6 +1942,7 @@ static void gicv3_resume(void)
 {
     unsigned int i;
     void __iomem *base;
+    typeof(gicv3_ctx.rdist)* rdist = &gicv3_ctx.rdist;
 
     if ( !gicv3_ctx.dist.irqs && gicv3_info.nr_lines > NR_GIC_LOCAL_IRQS )
     {
@@ -1901,63 +1951,112 @@ static void gicv3_resume(void)
         return;
     }
 
-    spin_lock(&gicv3.lock);
+    memcpy(&gicv3_tmp_ctx, &gicv3_ctx, sizeof(gicv3_ctx));
+    printk("#############################\nAFTER:\n");
+    gicv3_suspend();
+
+        for (i=0; i < sizeof(gicv3_ctx) / 4; i++)
+        {
+            printk("%08x ", *(((uint32_t *)&gicv3_ctx) + i));
+            if ( !((i+1) % 8) && i )
+                printk("\n");
+        }
+
+        for ( i = 1; i < DIV_ROUND_UP(gicv3_info.nr_lines, 32); i++ )
+        {
+            int j;
+            typeof(gicv3_ctx.dist.irqs) irqs = gicv3_ctx.dist.irqs + i - 1;
+
+            printk("\nIRQ Block %d:\n", i);
+            for (j = 0; j < sizeof(*irqs)/4; j++)
+            {
+                printk("%08x ", *(((uint32_t *)irqs) + j));
+                if ( !((j+1) % 8) && j )
+                    printk("\n");
+            }
+        }
+
+    memcpy(&gicv3_ctx, &gicv3_tmp_ctx, sizeof(gicv3_ctx));
 
     writel_relaxed(0, GICD + GICD_CTLR);
 
-    gicv3_cpu_disable();
-    gicv3_hyp_disable();
+    for ( i = NR_GIC_LOCAL_IRQS; i < gicv3_info.nr_lines; i += 32 )
+        writel_relaxed(GENMASK(31, 0), GICD + GICD_IGROUPR + (i / 32) * 4);
 
     for ( i = 1; i < DIV_ROUND_UP(gicv3_info.nr_lines, 32); i++ )
     {
         typeof(gicv3_ctx.dist.irqs) irqs = gicv3_ctx.dist.irqs + i - 1;
-        unsigned int prio, irq;
+        unsigned int irq;
 
-        writel_relaxed(irqs->icfgr[0], GICD + GICD_ICFGR + (2 * i) * 4);
-        writel_relaxed(irqs->icfgr[1], GICD + GICD_ICFGR + (2 * i + 1) * 4);
+        base = GICD + GICD_ICFGR + 8 * i;
+        writel_relaxed(irqs->icfgr[0], base);
+        writel_relaxed(irqs->icfgr[1], base + 4);
 
-        base = GICD + GICD_IPRIORITYR;
-        for ( prio = 0; prio < 8; prio++ )
-            writel_relaxed(irqs->ipriorityr[prio], base + (i + prio) * 4);
+        base = GICD + GICD_IPRIORITYR + 32 * i;
+        for ( irq = 0; irq < 8; irq++ )
+            writel_relaxed(irqs->ipriorityr[irq], base + 4 * irq );
 
+        base = GICD + GICD_IROUTER + 32 * i;
         for ( irq = 0; irq < 32; irq++ )
-            writeq_relaxed_non_atomic(irqs->irouter[irq], GICD + GICD_IROUTER + i * 32 + irq * 8);
+            writeq_relaxed_non_atomic(irqs->irouter[irq], base + 8 * irq);
 
-        writel_relaxed(0xffffffff, GICD + GICD_ICENABLER + i * 4);
         writel_relaxed(irqs->isenabler, GICD + GICD_ISENABLER + i * 4);
-
-        writel_relaxed(0xffffffff, GICD + GICD_ICACTIVER + i * 4);
         writel_relaxed(irqs->isactiver, GICD + GICD_ISACTIVER + i * 4);
     }
 
-    /* Restore GICR (Redistributor) configuration */
-    base = GICD_RDIST_SGI_BASE;
-
-    for (i = 0; i < NR_GIC_LOCAL_IRQS / 4; i += 4)
-        writel_relaxed(gicv3_ctx.rdist.ipriorityr[i], base + GICR_IPRIORITYR0 + i * 4);
-
-    writel_relaxed(0xffffffff, base + GICR_ICENABLER0);
-    writel_relaxed(gicv3_ctx.rdist.isenabler, base + GICR_ISENABLER0);
-    writel_relaxed(0xffffffff, base + GICR_ICACTIVER0);
-    writel_relaxed(gicv3_ctx.rdist.isactiver, base + GICR_ISACTIVER0);
-
-    writel_relaxed(gicv3_ctx.rdist.igroupr,   base + GICR_IGROUPR0);
-    writel_relaxed(gicv3_ctx.rdist.icfgr[0],  base + GICR_ICFGR0);
-    writel_relaxed(gicv3_ctx.rdist.icfgr[1],  base + GICR_ICFGR1);
-
-    /* Restore CPU interface (System registers) */
-    WRITE_SYSREG(gicv3_ctx.cpu.pmr,     ICC_PMR_EL1);
-    WRITE_SYSREG(gicv3_ctx.cpu.bpr,     ICC_BPR1_EL1);
-    WRITE_SYSREG(gicv3_ctx.cpu.sre_el2, ICC_SRE_EL2);
-    WRITE_SYSREG(gicv3_ctx.cpu.grpen,   ICC_IGRPEN1_EL1);
-    WRITE_SYSREG(gicv3_ctx.cpu.ctlr,    ICC_CTLR_EL1);
-
-   /* Restore GICD configuration */
     writel_relaxed(gicv3_ctx.dist.ctlr, GICD + GICD_CTLR);
+    gicv3_dist_wait_for_rwp();
 
+    /* Restore GICR (Redistributor) configuration */
     gicv3_enable_redist();
 
-    spin_unlock(&gicv3.lock);
+    /* If the host has any ITSes, enable LPIs now. */
+    if ( gicv3_its_host_has_its() )
+    {
+        if ( !gicv3_enable_lpis() )
+        {
+            dprintk(XENLOG_ERR,
+                    "GICv3 can't resume due to LPI enable failure!\n");
+            return;
+        }
+
+        BUG();
+    }
+
+    base = GICD_RDIST_SGI_BASE;
+
+    writel_relaxed(0xffffffff, base + GICR_ICENABLER0);
+    gicv3_redist_wait_for_rwp();
+
+    for (i = 0; i < NR_GIC_LOCAL_IRQS / 4; i += 4)
+        writel_relaxed(rdist->ipriorityr[i], base + GICR_IPRIORITYR0 + i * 4);
+
+    writel_relaxed(rdist->isactiver, base + GICR_ISACTIVER0);
+
+    writel_relaxed(rdist->igroupr,  base + GICR_IGROUPR0);
+    writel_relaxed(rdist->icfgr[0], base + GICR_ICFGR0);
+    writel_relaxed(rdist->icfgr[1], base + GICR_ICFGR1);
+
+    gicv3_redist_wait_for_rwp();
+
+    writel_relaxed(rdist->isenabler, base + GICR_ISENABLER0);
+    writel_relaxed(rdist->ctlr, GICD_RDIST_BASE + GICR_CTLR);
+
+    gicv3_redist_wait_for_rwp();
+
+    WRITE_SYSREG(gicv3_ctx.cpu.sre_el2, ICC_SRE_EL2);
+    isb();
+
+    /* Restore CPU interface (System registers) */
+    WRITE_SYSREG(gicv3_ctx.cpu.pmr,   ICC_PMR_EL1);
+    WRITE_SYSREG(gicv3_ctx.cpu.bpr,   ICC_BPR1_EL1);
+    WRITE_SYSREG(gicv3_ctx.cpu.ctlr,  ICC_CTLR_EL1);
+    WRITE_SYSREG(gicv3_ctx.cpu.grpen, ICC_IGRPEN1_EL1);
+    isb();
+
+    gicv3_hyp_init();
+
+    gicv3_restore_state(current);
 }
 
 #endif /* CONFIG_SYSTEM_SUSPEND */

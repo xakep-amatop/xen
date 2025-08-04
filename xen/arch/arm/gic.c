@@ -345,7 +345,7 @@ void gic_interrupt(struct cpu_user_regs *regs, int is_fiq)
         irq = gic_hw_ops->read_irq();
 
         if ( debug_mask )
-            printk("GIC: CPU%d: got IRQ %u (FIQ=%d)\n", smp_processor_id(), irq, is_fiq);
+            printk_once("GIC: CPU%d: got IRQ %u (FIQ=%d)\n", smp_processor_id(), irq, is_fiq);
 
         if ( likely(irq >= GIC_SGI_STATIC_MAX && irq < 1020) )
         {
