@@ -5,6 +5,7 @@
 
 #include <xen/console.h>
 #include <xen/cpu.h>
+#include <xen/iommu.h>
 #include <xen/llc-coloring.h>
 #include <xen/sched.h>
 #include <xen/tasklet.h>
@@ -62,6 +63,13 @@ static void cf_check system_suspend(void *data)
 
     time_suspend();
 
+    status = iommu_suspend();
+    if ( status )
+    {
+        system_state = SYS_STATE_resume;
+        goto resume_time;
+    }
+
     console_start_sync();
     status = console_suspend();
     if ( status )
@@ -118,6 +126,9 @@ static void cf_check system_suspend(void *data)
     console_resume();
     console_end_sync();
 
+    iommu_resume();
+
+ resume_time:
     time_resume();
 
  resume_nonboot_cpus:
