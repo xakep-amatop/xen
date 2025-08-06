@@ -5,6 +5,7 @@
 
 #include <xen/console.h>
 #include <xen/cpu.h>
+#include <xen/iommu.h>
 #include <xen/llc-coloring.h>
 #include <xen/sched.h>
 
@@ -49,6 +50,13 @@ static long system_suspend(void *data)
     }
 
     time_suspend();
+
+    status = iommu_suspend();
+    if ( status )
+    {
+        system_state = SYS_STATE_resume;
+        goto resume_time;
+    }
 
     local_irq_save(flags);
     status = gic_suspend();
@@ -107,6 +115,10 @@ static long system_suspend(void *data)
 
  resume_irqs:
     local_irq_restore(flags);
+
+    iommu_resume();
+
+ resume_time:
     time_resume();
 
  resume_nonboot_cpus:
