@@ -4,6 +4,7 @@
 #include <asm/suspend.h>
 #include <xen/console.h>
 #include <xen/cpu.h>
+#include <xen/iommu.h>
 #include <xen/sched.h>
 
 /*
@@ -48,6 +49,13 @@ static long system_suspend(void *data)
     }
 
     time_suspend();
+
+    status = iommu_suspend();
+    if ( status )
+    {
+        system_state = SYS_STATE_resume;
+        goto resume_time;
+    }
 
     local_irq_save(flags);
     status = gic_suspend();
@@ -105,6 +113,10 @@ static long system_suspend(void *data)
 
  resume_irqs:
     local_irq_restore(flags);
+
+    iommu_resume();
+
+ resume_time:
     time_resume();
 
  resume_nonboot_cpus:
@@ -138,6 +150,15 @@ static long system_suspend(void *data)
 int host_system_suspend(void)
 {
     int status;
+
+
+#ifndef CONFIG_IPMMU_VMSA
+    if ( iommu_enabled )
+    {
+        dprintk(XENLOG_ERROR, "IOMMU is enabled, suspend not supported yet\n");
+        return -ENOTSUP;
+    }
+#endif
 
     /*
      * system_suspend should be called when Dom0 finalizes the suspend
