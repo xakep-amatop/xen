@@ -1824,6 +1824,9 @@ static void __init gicv3_alloc_context(void)
 {
     uint32_t blocks = DIV_ROUND_UP(gicv3_info.nr_lines, 32);
 
+    if ( gicv3_its_host_has_its() )
+        return;
+
     /* according to spec it is possible don't have SPIs */
     if ( blocks == 1 )
         return;
@@ -1848,6 +1851,10 @@ static int gicv3_suspend(void)
     unsigned int i;
     void __iomem *base;
     typeof(gicv3_ctx.rdist)* rdist = &gicv3_ctx.rdist;
+
+    /* TODO: implement support for ITS */
+    if ( gicv3_its_host_has_its() )
+        return -EOPNOTSUPP;
 
     if ( !gicv3_ctx.dist.irqs && gicv3_info.nr_lines > NR_GIC_LOCAL_IRQS )
     {
@@ -2009,19 +2016,6 @@ static void gicv3_resume(void)
 
     /* Restore GICR (Redistributor) configuration */
     gicv3_enable_redist();
-
-    /* If the host has any ITSes, enable LPIs now. */
-    if ( gicv3_its_host_has_its() )
-    {
-        if ( !gicv3_enable_lpis() )
-        {
-            dprintk(XENLOG_ERR,
-                    "GICv3 can't resume due to LPI enable failure!\n");
-            return;
-        }
-
-        BUG();
-    }
 
     base = GICD_RDIST_SGI_BASE;
 
