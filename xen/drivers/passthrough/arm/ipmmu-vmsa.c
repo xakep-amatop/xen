@@ -722,6 +722,9 @@ static void ipmmu_resume(void)
     list_for_each_entry( mmu, &ipmmu_devices, list )
     {
         uint32_t reg;
+        struct dt_device_node *node = dev_to_dt(mmu->dev);
+
+        ipmmu_preinit(node);
 
         /* Do not use security group function */
         reg = IMSCTLR + mmu->features->control_offset_base;
@@ -743,7 +746,21 @@ static void ipmmu_resume(void)
             }
         }
         else
+        {
+            uint32_t reg;
+
+            /*
+             * Disable IPMMU TLB cache function of Cache devices that
+             * do require such action.
+             */
+            if ( ipmmu_is_mmu_tlb_disable_needed(node) )
+            {
+                reg = IMSCTLR + mmu->features->control_offset_base;
+                ipmmu_write(mmu, reg, ipmmu_read(mmu, reg) | IMSCTLR_DISCACHE);
+            }
+
             ipmmu_utlbs_restore(mmu);
+        }
     }
 
     spin_unlock(&ipmmu_devices_lock);

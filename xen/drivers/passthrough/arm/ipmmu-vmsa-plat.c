@@ -108,7 +108,7 @@ static const struct rcar_sysc_ch rcar_sysc_chs[3] = {
 
 #define dev_name(dev) dt_node_full_name(dev_to_dt(dev))
 
-static int __init rcar_sysc_init(void)
+static int rcar_sysc_init(void)
 {
 	u32 syscier, syscimr;
 	int i;
@@ -144,7 +144,7 @@ static int __init rcar_sysc_init(void)
 	return 0;
 }
 
-static bool __init rcar_sysc_power_is_off(const struct rcar_sysc_ch *sysc_ch)
+static bool rcar_sysc_power_is_off(const struct rcar_sysc_ch *sysc_ch)
 {
 	unsigned int status;
 
@@ -155,7 +155,7 @@ static bool __init rcar_sysc_power_is_off(const struct rcar_sysc_ch *sysc_ch)
 	return false;
 }
 
-static int __init rcar_sysc_power_on(const struct rcar_sysc_ch *sysc_ch)
+static int rcar_sysc_power_on(const struct rcar_sysc_ch *sysc_ch)
 {
 	unsigned int status;
 	int ret = 0, i, j;
@@ -220,7 +220,7 @@ static uint32_t ipmmu_get_mmu_pd(struct dt_device_node *np)
  * the result they are in power-off state during booting, therefore they must be
  * explicitly powered on before initializing.
  */
-static int __init ipmmu_power_on(struct dt_device_node *np)
+static int ipmmu_power_on(struct dt_device_node *np)
 {
 	int i, pd, ret = -ENODEV;
 
@@ -283,7 +283,7 @@ bool ipmmu_is_mmu_tlb_disable_needed(struct dt_device_node *np)
 	return false;
 }
 
-int __init ipmmu_preinit(struct dt_device_node *np)
+int ipmmu_preinit(struct dt_device_node *np)
 {
 	return ipmmu_power_on(np);
 }
