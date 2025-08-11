@@ -24,6 +24,7 @@ static long system_suspend(void *data)
 {
     int status;
     unsigned long flags;
+    struct domain *d;
 
     BUG_ON(system_state != SYS_STATE_active);
 
@@ -124,6 +125,13 @@ static long system_suspend(void *data)
     domain_resume(hardware_domain);
 
     printk("Resume (status %d)\n", status);
+
+
+    rcu_read_lock(&domlist_read_lock);
+    for_each_domain ( d )
+        domain_resume(d);
+    rcu_read_unlock(&domlist_read_lock);
+
     return status;
 }
 
