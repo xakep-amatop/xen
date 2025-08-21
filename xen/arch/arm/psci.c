@@ -71,6 +71,7 @@ int call_psci_system_suspend(void)
     if ( psci_ver < PSCI_VERSION(1, 0) )
         return PSCI_NOT_SUPPORTED;
 
+    printk("Calling PSCI system suspend\n");
     /* 2nd argument (context ID) is not used */
     arm_smccc_smc(PSCI_1_0_FN_NATIVE(SYSTEM_SUSPEND), __pa(hyp_resume), &res);
     return PSCI_RET(res);

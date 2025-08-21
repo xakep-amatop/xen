@@ -1863,6 +1863,11 @@ static int gicv3_suspend(void)
 
     gicv3_save_state(current);
 
+    i = gicv3_read_irq();
+    printk("IRQ %u\n", i);
+
+    return 0;
+
     /* Save GICC configuration */
     gicv3_ctx.cpu.ctlr     = READ_SYSREG(ICC_CTLR_EL1);
     gicv3_ctx.cpu.pmr      = READ_SYSREG(ICC_PMR_EL1);
@@ -1914,6 +1919,9 @@ static int gicv3_suspend(void)
         irqs->isactiver = readl_relaxed(GICD + GICD_ISACTIVER + 4 * i);
         irqs->isenabler = readl_relaxed(GICD + GICD_ISENABLER + 4 * i);
     }
+
+    i = gicv3_read_irq();
+    printk("0000 IRQ %u\n", i);
 
     return 0;
 }

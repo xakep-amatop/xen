@@ -20,6 +20,17 @@
  */
 
 struct cpu_context cpu_context;
+static struct timer suspend_test;
+
+static void suspend_test_callback(void *arg)
+{
+    static int count = 0;
+    printk("Suspend test timer expired %d\n", count++);
+
+    console_start_sync();
+    console_end_sync();
+    set_timer(&suspend_test, NOW() + SECONDS(4));
+}
 
 /* Xen suspend. Note: data is not used (suspend is the suspend to RAM) */
 static long system_suspend(void *data)
@@ -48,33 +59,43 @@ static long system_suspend(void *data)
         goto resume_nonboot_cpus;
     }
 
+    printk("%s:%d\n", __func__, __LINE__);
     time_suspend();
 
-    status = iommu_suspend();
-    if ( status )
-    {
-        system_state = SYS_STATE_resume;
-        goto resume_time;
-    }
+    //status = iommu_suspend();
+    //if ( status )
+    //{
+    //    system_state = SYS_STATE_resume;
+    //    goto resume_time;
+    //}
+
+    printk("%s:%d\n", __func__, __LINE__);
+    console_start_sync();
+    console_end_sync();
 
     local_irq_save(flags);
-    status = gic_suspend();
-    if ( status )
-    {
-        system_state = SYS_STATE_resume;
-        goto resume_irqs;
-    }
+    //status = gic_suspend();
+    //if ( status )
+    //{
+    //    system_state = SYS_STATE_resume;
+    //    goto resume_irqs;
+    //}
+
+    printk("%s:%d\n", __func__, __LINE__);
+    console_start_sync();
+    console_end_sync();
 
     printk("Xen suspending...\n");
 
     console_start_sync();
-    status = console_suspend();
-    if ( status )
-    {
-        dprintk(XENLOG_ERR, "Failed to suspend the console, err=%d\n", status);
-        system_state = SYS_STATE_resume;
-        goto resume_console;
-    }
+    console_end_sync();
+    //status = console_suspend();
+    //if ( status )
+    //{
+    //    dprintk(XENLOG_ERR, "Failed to suspend the console, err=%d\n", status);
+    //    system_state = SYS_STATE_resume;
+    //    goto resume_console;
+    //}
 
     set_init_ttbr(xen_pgtable);
 
@@ -105,18 +126,19 @@ static long system_suspend(void *data)
     system_state = SYS_STATE_resume;
     update_boot_mapping(false);
 
- resume_console:
+ //resume_console:
     console_resume();
+    console_start_sync();
     console_end_sync();
 
-    gic_resume();
+    //gic_resume();
 
- resume_irqs:
+ //resume_irqs:
     local_irq_restore(flags);
 
-    iommu_resume();
+    //iommu_resume();
 
- resume_time:
+ //resume_time:
     time_resume();
 
  resume_nonboot_cpus:
@@ -137,6 +159,16 @@ static long system_suspend(void *data)
     domain_resume(hardware_domain);
 
     printk("Resume (status %d)\n", status);
+    console_start_sync();
+    console_end_sync();
+
+    printk("Xen resuming... END\n");
+    console_start_sync();
+    console_end_sync();
+
+    init_timer(&suspend_test, suspend_test_callback, NULL, 0);
+    set_timer(&suspend_test, NOW());
+
     return status;
 }
 
@@ -154,7 +186,7 @@ int host_system_suspend(void)
 
     /* TODO: drop check once suspend/resume support for SMMU is implemented */
 #ifndef CONFIG_IPMMU_VMSA
-    if ( iommu_enabled )
+    if ( 0 &&  iommu_enabled )
     {
         dprintk(XENLOG_ERR, "IOMMU is enabled, suspend not supported yet\n");
         return -ENOSYS;

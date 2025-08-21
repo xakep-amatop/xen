@@ -369,6 +369,8 @@
 #define ARM_SMMU_CMDQ_SYNC_TIMEOUT_US	1000000 /* 1s! */
 #define ARM_SMMU_CMDQ_SYNC_SPIN_COUNT	10
 
+#define RPM_AUTOSUSPEND_DELAY_MS	15
+
 #define FIELD_PREP(_mask, _val)			\
 	(((typeof(_mask))(_val) << (ffs64(_mask) - 1)) & (_mask))
 

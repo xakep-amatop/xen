@@ -209,11 +209,16 @@ static void do_psci_0_2_system_reset(void)
     domain_shutdown(d,SHUTDOWN_reboot);
 }
 
+#include <xen/console.h>
+
 static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
 {
     int32_t rc;
     struct vcpu *v;
     struct domain *d = current->domain;
+
+    console_start_sync();
+    console_end_sync();
 
 #ifndef CONFIG_SYSTEM_SUSPEND
     if ( is_hardware_domain(d) )
@@ -256,6 +261,9 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
     dprintk(XENLOG_DEBUG,
             "Dom %u: SYSTEM_SUSPEND requested, epoint=%#lx, cid=%#lx\n",
             d->domain_id, epoint, cid);
+
+    console_start_sync();
+    console_end_sync();
 
     return rc;
 }
