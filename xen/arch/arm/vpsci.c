@@ -15,14 +15,12 @@ int vpsci_vcpu_up_prepare(struct vcpu *v, register_t entry_point,
                    register_t context_id)
 {
     int rc;
-    struct domain *d = current->domain;
+    struct domain *d = v->domain;
     bool is_thumb = entry_point & 1;
     struct vcpu_guest_context *ctxt;
 
     if ( (ctxt = alloc_vcpu_guest_context()) == NULL )
         return -ENOMEM;
-
-    vgic_clear_pending_irqs(v);
 
     memset(ctxt, 0, sizeof(*ctxt));
     ctxt->user_regs.pc64 = (u64) entry_point;
@@ -213,6 +211,25 @@ static void do_psci_0_2_system_reset(void)
     domain_shutdown(d,SHUTDOWN_reboot);
 }
 
+static inline int events_need_delivery_nomask(struct domain *d)
+{
+    struct vcpu *v;
+
+    for_each_vcpu ( d, v )
+    {
+        if ( vgic_vcpu_pending_irq(v) )
+            return 1;
+
+        if ( !vcpu_info(v, evtchn_upcall_pending) )
+            continue;
+
+        if ( vgic_evtchn_irq_pending(v) )
+            return 1;
+    }
+
+    return 0;
+}
+
 static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
 {
     int32_t rc;
@@ -250,14 +267,14 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
     d->arch.resume_ctx.wake_cpu = current;
 
     gprintk(XENLOG_DEBUG,
-            "SYSTEM_SUSPEND requested, epoint=0x%"PRIregister", cid=0x%"PRIregister,
+            "SYSTEM_SUSPEND requested, epoint=0x%"PRIregister", cid=0x%"PRIregister"\n",
             epoint, cid);
 
 #ifdef CONFIG_SYSTEM_SUSPEND
-    if ( is_hardware_domain(d) && host_system_suspend() )
+    if ( is_hardware_domain(d) )
     {
-        BUG_ON(1); /* host_system_suspend() should not return */
-        return PSCI_DENIED;
+        printk("There is any events %d\n", events_need_delivery_nomask(d));
+        host_system_suspend();
     }
 #endif
 

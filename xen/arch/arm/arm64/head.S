@@ -658,6 +658,11 @@ mmu_resumed:
         msr     CPTR_EL2, x2
         ldr     x2, [x0], #8
         msr     HCR_EL2, x2
+
+        ldr     x0, =dbg          // address of dbg
+        ldr     x1, =0xDEADBEEF   // load constant into x1
+        str     x1, [x0]          // store into dbg
+
         isb
 
         /*

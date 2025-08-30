@@ -1727,6 +1727,11 @@ int domain_soft_reset(struct domain *d, bool resuming)
         unmap_guest_area(v, &v->runstate_guest_area);
     }
 
+    dprintk(XENLOG_WARNING,
+            "%pd: Invalid domain state for resume: is_shutting_down=%d, shutdown_code=%d\n",
+            d, d->is_shutting_down, d->shutdown_code);
+
+
     rc = arch_domain_soft_reset(d);
     if ( !rc )
         domain_resume(d);
