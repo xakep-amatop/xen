@@ -1871,8 +1871,6 @@ static int gicv3_suspend(void)
         return -ENOMEM;
     }
 
-    gicv3_save_state(current);
-
     /* Save GICC configuration */
     gicv3_ctx.cpu.ctlr     = READ_SYSREG(ICC_CTLR_EL1);
     gicv3_ctx.cpu.pmr      = READ_SYSREG(ICC_PMR_EL1);
@@ -1998,8 +1996,6 @@ static void gicv3_resume(void)
     isb();
 
     gicv3_hyp_init();
-
-    gicv3_restore_state(current);
 }
 
 #endif /* CONFIG_SYSTEM_SUSPEND */
