@@ -254,10 +254,9 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
             epoint, cid);
 
 #ifdef CONFIG_SYSTEM_SUSPEND
-    if ( is_hardware_domain(d) && host_system_suspend() )
+    if ( is_hardware_domain(d) )
     {
-        BUG_ON(1); /* host_system_suspend() should not return */
-        return PSCI_DENIED;
+        host_system_suspend();
     }
 #endif
 

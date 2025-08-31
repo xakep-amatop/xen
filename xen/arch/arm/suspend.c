@@ -8,6 +8,7 @@
 #include <xen/iommu.h>
 #include <xen/llc-coloring.h>
 #include <xen/sched.h>
+#include <xen/tasklet.h>
 
 /*
  * TODO list:
@@ -24,14 +25,25 @@
 struct cpu_context cpu_context;
 
 /* Xen suspend. Note: data is not used (suspend is the suspend to RAM) */
-static long system_suspend(void *data)
+static void cf_check system_suspend(void *data)
 {
     int status;
     unsigned long flags;
+    /* TODO: drop check after verification that features can work together */
+    if ( llc_coloring_enabled )
+    {
+        dprintk(XENLOG_ERR,
+                "System suspend is not supported with LLC_COLORING enabled\n");
+        status = -ENOSYS;
+        goto dom_resume;
+    }
 
     BUG_ON(system_state != SYS_STATE_active);
 
     system_state = SYS_STATE_suspend;
+
+    printk("Xen suspending...\n");
+
     freeze_domains();
     scheduler_disable();
 
@@ -49,6 +61,8 @@ static long system_suspend(void *data)
         goto resume_nonboot_cpus;
     }
 
+    console_start_sync();
+    local_irq_save(flags);
     time_suspend();
 
     status = iommu_suspend();
@@ -58,7 +72,6 @@ static long system_suspend(void *data)
         goto resume_time;
     }
 
-    local_irq_save(flags);
     status = gic_suspend();
     if ( status )
     {
@@ -66,9 +79,7 @@ static long system_suspend(void *data)
         goto resume_irqs;
     }
 
-    printk("Xen suspending...\n");
 
-    console_start_sync();
     status = console_suspend();
     if ( status )
     {
@@ -109,7 +120,6 @@ static long system_suspend(void *data)
 
  resume_console:
     console_resume();
-    console_end_sync();
 
     gic_resume();
 
@@ -120,6 +130,8 @@ static long system_suspend(void *data)
 
  resume_time:
     time_resume();
+
+    console_end_sync();
 
  resume_nonboot_cpus:
     /*
@@ -135,48 +147,24 @@ static long system_suspend(void *data)
 
     system_state = SYS_STATE_active;
 
+    printk("Resume (status %d dbg %x)\n", status, dbg);
+
+ dom_resume:
     /* The resume of hardware domain should always follow Xen's resume. */
     domain_resume(hardware_domain);
-
-    printk("Resume (status %d)\n", status);
-    return status;
 }
 
-int host_system_suspend(void)
+static DECLARE_TASKLET(system_suspend_tasklet, system_suspend, NULL);
+
+void host_system_suspend(void)
 {
-    int status;
-
-    /* TODO: drop check after verification that features can work together */
-    if ( llc_coloring_enabled )
-    {
-        dprintk(XENLOG_ERR,
-                "System suspend is not supported with LLC_COLORING enabled\n");
-        return -ENOSYS;
-    }
-
     /*
-     * system_suspend should be called when Dom0 finalizes the suspend
-     * procedure from its boot core (VCPU#0). However, Dom0's VCPU#0 could
-     * be mapped to any PCPU (this function could be executed by any PCPU).
-     * The suspend procedure has to be finalized by the PCPU#0 (non-boot
-     * PCPUs will be disabled during the suspend).
+     * system_suspend should be called when hardware domain finalizes the
+     * suspend procedure from its boot core (VCPU#0). However, Dom0's vCPU#0
+     * could be mapped to any pCPU. The suspend procedure has to be finalized
+     * by the pCPU#0 (non-boot pCPUs will be disabled during the suspend).
      */
-    status = continue_hypercall_on_cpu(0, system_suspend, NULL);
-
-    /*
-     * If an error happened, there is nothing that needs to be done here
-     * because the system_suspend always returns in fully functional state
-     * no matter what the outcome of suspend procedure is. If the system
-     * suspended successfully the function will return 0 after the resume.
-     * Otherwise, if an error is returned it means Xen did not suspended,
-     * but it is still in the same state as if the system_suspend was never
-     * called. We dump a debug message in case of an error for debugging/
-     * logging purpose.
-     */
-    if ( status )
-        dprintk(XENLOG_ERR, "Failed to suspend, errno=%d\n", status);
-
-    return status;
+    tasklet_schedule_on_cpu(&system_suspend_tasklet, 0);
 }
 
 /*
