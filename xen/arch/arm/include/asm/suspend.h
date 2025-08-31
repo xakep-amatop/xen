@@ -25,6 +25,7 @@ struct cpu_context {
 #endif
 
 extern struct cpu_context cpu_context;
+extern int dbg;
 
 void hyp_resume(void);
 int prepare_resume_ctx(struct cpu_context *ptr);

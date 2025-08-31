@@ -1821,10 +1821,6 @@ static void __init gicv3_alloc_context(void)
 {
     uint32_t blocks = DIV_ROUND_UP(gicv3_info.nr_lines, 32);
 
-    /* We don't have ITS support for suspend */
-    if ( gicv3_its_host_has_its() )
-        return;
-
     /* The spec allows for systems without any SPIs */
     if ( blocks == 1 )
         return;
@@ -1857,13 +1853,6 @@ static int gicv3_suspend(void)
     unsigned int i;
     void __iomem *base;
     typeof(gicv3_ctx.rdist)* rdist = &gicv3_ctx.rdist;
-
-    /* TODO: implement support for ITS */
-    if ( gicv3_its_host_has_its() )
-    {
-        printk(XENLOG_ERR "GICv3: ITS suspend support is not implemented\n");
-        return -ENOSYS;
-    }
 
     if ( !gicv3_ctx.dist.irqs && gicv3_info.nr_lines > NR_GIC_LOCAL_IRQS )
     {

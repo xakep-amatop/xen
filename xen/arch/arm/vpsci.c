@@ -15,14 +15,12 @@ int vpsci_vcpu_up_prepare(struct vcpu *v, register_t entry_point,
                    register_t context_id)
 {
     int rc;
-    struct domain *d = current->domain;
+    struct domain *d = v->domain;
     bool is_thumb = entry_point & 1;
     struct vcpu_guest_context *ctxt;
 
     if ( (ctxt = alloc_vcpu_guest_context()) == NULL )
         return -ENOMEM;
-
-    vgic_clear_pending_irqs(v);
 
     memset(ctxt, 0, sizeof(*ctxt));
     ctxt->user_regs.pc64 = (u64) entry_point;
@@ -250,7 +248,7 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
     d->arch.resume_ctx.wake_cpu = current;
 
     gprintk(XENLOG_DEBUG,
-            "SYSTEM_SUSPEND requested, epoint=0x%"PRIregister", cid=0x%"PRIregister,
+            "SYSTEM_SUSPEND requested, epoint=0x%"PRIregister", cid=0x%"PRIregister"\n",
             epoint, cid);
 
 #ifdef CONFIG_SYSTEM_SUSPEND
