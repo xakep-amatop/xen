@@ -1782,17 +1782,14 @@ static bool gic_dist_supports_lpis(void)
 struct gicv3_ctx {
     struct dist_ctx {
         uint32_t ctlr;
-        /*
-         * This struct represent block of 32 IRQs
-         * TODO: store extended SPI configuration (GICv3.1+)
-         */
+        /* This struct represent block of 32 IRQs */
         struct irq_regs {
             uint32_t icfgr[2];
             uint32_t ipriorityr[8];
             uint64_t irouter[32];
             uint32_t isactiver;
             uint32_t isenabler;
-        } *irqs;
+        } *irqs, *espi_irqs;
     } dist;
 
     /* have only one rdist structure for last running CPU during suspend */
@@ -1831,8 +1828,26 @@ static void __init gicv3_alloc_context(void)
         gicv3_ctx.dist.irqs = xzalloc_array(typeof(*gicv3_ctx.dist.irqs),
                                             blocks - 1);
         if ( !gicv3_ctx.dist.irqs )
+        {
             printk(XENLOG_ERR "Failed to allocate memory for GICv3 suspend context\n");
+            return;
+        }
     }
+
+#ifdef CONFIG_GICV3_ESPI
+    if ( !gicv3_info.nr_espi )
+        return;
+
+    gicv3_ctx.dist.espi_irqs = xzalloc_array(typeof(*gicv3_ctx.dist.espi_irqs),
+                                             gicv3_info.nr_espi / 32);
+    if ( !gicv3_ctx.dist.espi_irqs )
+    {
+        xfree(gicv3_ctx.dist.irqs);
+        gicv3_ctx.dist.irqs = NULL;
+
+        printk(XENLOG_ERR "Failed to allocate memory for GICv3 eSPI suspend context\n");
+    }
+#endif
 }
 
 static void gicv3_disable_redist(void)
@@ -1850,6 +1865,59 @@ static void gicv3_disable_redist(void)
 
     writel_relaxed(readl_relaxed(waker) | GICR_WAKER_ProcessorSleep, waker);
     while ( (readl_relaxed(waker) & GICR_WAKER_ChildrenAsleep) == 0 );
+}
+
+#define GET_SPI_REG_OFFSET(name, is_espi) \
+    ((is_espi) ? GICD_##name##nE : GICD_##name)
+
+static void gicv3_store_spi_irq_block(typeof(gicv3_ctx.dist.irqs) irqs,
+                                      unsigned int i, bool is_espi)
+{
+    void __iomem *base;
+    unsigned int irq;
+
+    base = GICD + GET_SPI_REG_OFFSET(ICFGR, is_espi) + 8 * i;
+    irqs->icfgr[0] = readl_relaxed(base);
+    irqs->icfgr[1] = readl_relaxed(base + 4);
+
+    base = GICD + GET_SPI_REG_OFFSET(IPRIORITYR, is_espi) + 32 * i;
+    for ( irq = 0; irq < 8; irq++ )
+        irqs->ipriorityr[irq] = readl_relaxed(base + 4 * irq);
+
+    base = GICD + GET_SPI_REG_OFFSET(IROUTER, is_espi) + 32 * i;
+    for ( irq = 0; irq < 32; irq++ )
+        irqs->irouter[irq] = readq_relaxed_non_atomic(base + 8 * irq);
+
+    base = GICD + GET_SPI_REG_OFFSET(ISACTIVER, is_espi) + 4 * i;
+    irqs->isactiver = readl_relaxed(base);
+
+    base = GICD + GET_SPI_REG_OFFSET(ISENABLER, is_espi) + 4 * i;
+    irqs->isenabler = readl_relaxed(base);
+}
+
+static void gicv3_restore_spi_irq_block(typeof(gicv3_ctx.dist.irqs) irqs,
+                                        unsigned int i, bool is_espi)
+{
+    void __iomem *base;
+    unsigned int irq;
+
+    base = GICD + GET_SPI_REG_OFFSET(ICFGR, is_espi) + 8 * i;
+    writel_relaxed(irqs->icfgr[0], base);
+    writel_relaxed(irqs->icfgr[1], base + 4);
+
+    base = GICD + GET_SPI_REG_OFFSET(IPRIORITYR, is_espi) + 32 * i;
+    for ( irq = 0; irq < 8; irq++ )
+        writel_relaxed(irqs->ipriorityr[irq], base + 4 * irq);
+
+    base = GICD + GET_SPI_REG_OFFSET(IROUTER, is_espi) + 32 * i;
+    for ( irq = 0; irq < 32; irq++ )
+        writeq_relaxed_non_atomic(irqs->irouter[irq], base + 8 * irq);
+
+    base = GICD + GET_SPI_REG_OFFSET(ISENABLER, is_espi) + i * 4;
+    writel_relaxed(irqs->isenabler, base);
+
+    base = GICD + GET_SPI_REG_OFFSET(ISACTIVER, is_espi) + i * 4;
+    writel_relaxed(irqs->isactiver, base);
 }
 
 static int gicv3_suspend(void)
@@ -1870,6 +1938,14 @@ static int gicv3_suspend(void)
         printk(XENLOG_ERR "GICv3: suspend context is not allocated!\n");
         return -ENOMEM;
     }
+
+#ifdef CONFIG_GICV3_ESPI
+    if ( gicv3_info.nr_espi && !gicv3_ctx.dist.espi_irqs )
+    {
+        printk(XENLOG_ERR "GICv3: eSPI suspend context is not allocated!\n");
+        return -ENOMEM;
+    }
+#endif
 
     /* Save GICC configuration */
     gicv3_ctx.cpu.ctlr     = READ_SYSREG(ICC_CTLR_EL1);
@@ -1903,25 +1979,12 @@ static int gicv3_suspend(void)
     gicv3_ctx.dist.ctlr = readl_relaxed(GICD + GICD_CTLR);
 
     for ( i = 1; i < DIV_ROUND_UP(gicv3_info.nr_lines, 32); i++ )
-    {
-        typeof(gicv3_ctx.dist.irqs) irqs = gicv3_ctx.dist.irqs + i - 1;
-        unsigned int irq;
+        gicv3_store_spi_irq_block(gicv3_ctx.dist.irqs + i - 1, i, false);
 
-        base = GICD + GICD_ICFGR + 8 * i;
-        irqs->icfgr[0] = readl_relaxed(base);
-        irqs->icfgr[1] = readl_relaxed(base + 4);
-
-        base = GICD + GICD_IPRIORITYR + 32 * i;
-        for ( irq = 0; irq < 8; irq++ )
-            irqs->ipriorityr[irq] = readl_relaxed(base + 4 * irq);
-
-        base = GICD + GICD_IROUTER + 32 * i;
-        for ( irq = 0; irq < 32; irq++ )
-            irqs->irouter[irq] = readq_relaxed_non_atomic(base + 8 * irq);
-
-        irqs->isactiver = readl_relaxed(GICD + GICD_ISACTIVER + 4 * i);
-        irqs->isenabler = readl_relaxed(GICD + GICD_ISENABLER + 4 * i);
-    }
+#ifdef CONFIG_GICV3_ESPI
+    for ( i = 0; i < gicv3_info.nr_espi / 32; i++ )
+        gicv3_store_spi_irq_block(gicv3_ctx.dist.espi_irqs + i, i, true);
+#endif
 
     return 0;
 }
@@ -1938,25 +2001,12 @@ static void gicv3_resume(void)
         writel_relaxed(GENMASK(31, 0), GICD + GICD_IGROUPR + (i / 32) * 4);
 
     for ( i = 1; i < DIV_ROUND_UP(gicv3_info.nr_lines, 32); i++ )
-    {
-        typeof(gicv3_ctx.dist.irqs) irqs = gicv3_ctx.dist.irqs + i - 1;
-        unsigned int irq;
+        gicv3_restore_spi_irq_block(gicv3_ctx.dist.irqs + i - 1, i, false);
 
-        base = GICD + GICD_ICFGR + 8 * i;
-        writel_relaxed(irqs->icfgr[0], base);
-        writel_relaxed(irqs->icfgr[1], base + 4);
-
-        base = GICD + GICD_IPRIORITYR + 32 * i;
-        for ( irq = 0; irq < 8; irq++ )
-            writel_relaxed(irqs->ipriorityr[irq], base + 4 * irq);
-
-        base = GICD + GICD_IROUTER + 32 * i;
-        for ( irq = 0; irq < 32; irq++ )
-            writeq_relaxed_non_atomic(irqs->irouter[irq], base + 8 * irq);
-
-        writel_relaxed(irqs->isenabler, GICD + GICD_ISENABLER + i * 4);
-        writel_relaxed(irqs->isactiver, GICD + GICD_ISACTIVER + i * 4);
-    }
+#ifdef CONFIG_GICV3_ESPI
+    for ( i = 0; i < gicv3_info.nr_espi / 32; i++ )
+        gicv3_restore_spi_irq_block(gicv3_ctx.dist.espi_irqs + i, i, true);
+#endif
 
     writel_relaxed(gicv3_ctx.dist.ctlr, GICD + GICD_CTLR);
     gicv3_dist_wait_for_rwp();
