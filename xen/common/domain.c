@@ -1317,7 +1317,11 @@ int domain_shutdown(struct domain *d, u8 reason)
         d->shutdown_code = reason;
     reason = d->shutdown_code;
 
+#if defined(CONFIG_SYSTEM_SUSPEND) && defined(CONFIG_ARM)
+    if ( reason != SHUTDOWN_suspend && is_hardware_domain(d) )
+#else
     if ( is_hardware_domain(d) )
+#endif
         hwdom_shutdown(reason);
 
     if ( d->is_shutting_down )
@@ -1352,6 +1356,7 @@ int domain_shutdown(struct domain *d, u8 reason)
 void domain_resume(struct domain *d)
 {
     struct vcpu *v;
+    int rc;
 
     /*
      * Some code paths assume that shutdown status does not get reset under
@@ -1360,6 +1365,13 @@ void domain_resume(struct domain *d)
     domain_pause(d);
 
     spin_lock(&d->shutdown_lock);
+
+    rc = arch_domain_resume(d);
+    if ( rc )
+    {
+        printk("%pd: Failed to resume domain (ret %d)\n", d, rc);
+        goto fail;
+    }
 
     d->is_shutting_down = d->is_shut_down = 0;
     d->shutdown_code = SHUTDOWN_CODE_INVALID;
@@ -1371,6 +1383,7 @@ void domain_resume(struct domain *d)
         v->paused_for_shutdown = 0;
     }
 
+ fail:
     spin_unlock(&d->shutdown_lock);
 
     domain_unpause(d);
