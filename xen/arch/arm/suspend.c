@@ -156,7 +156,7 @@ static DECLARE_TASKLET(system_suspend_tasklet, system_suspend, NULL);
 
 void host_system_suspend(void)
 {
-    if ( !is_hardware_domain(d) )
+    if ( !is_hardware_domain(current->domain) )
         return;
 
     /*
