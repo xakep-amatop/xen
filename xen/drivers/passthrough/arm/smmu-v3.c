@@ -2762,6 +2762,9 @@ static int arm_smmu_assign_dev(struct domain *d, u8 devfn,
 
 out:
 	spin_unlock(&xen_domain->lock);
+
+	printk("arm_smmu_assign_dev: %pd dev %p devfn %08x ret %d\n", d, dev, devfn, ret);
+
 	return ret;
 }
 
