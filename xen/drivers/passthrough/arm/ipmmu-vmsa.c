@@ -1683,8 +1683,8 @@ static int ipmmu_add_device(u8 devfn, struct device *dev)
             ret = ipmmu_deassign_device(dev_to_pci(dev)->domain, dev);
             BUG_ON(ret);
 
-            rcar4_pcie_osid_bdf_clear(bridge, reg_id);
-            rcar4_pcie_osid_reg_free(bridge, reg_id);
+            //rcar4_pcie_osid_bdf_clear(bridge, reg_id);
+            //rcar4_pcie_osid_reg_free(bridge, reg_id);
         }
 #endif
         dev_err(dev, "Failed to allocate context for suspend\n");
