@@ -1696,8 +1696,8 @@ static int ipmmu_add_device(u8 devfn, struct device *dev)
         ret = ipmmu_assign_device(pdev->domain, devfn, dev, 0);
         if ( ret )
         {
-            rcar4_pcie_osid_bdf_clear(bridge, reg_id);
-            rcar4_pcie_osid_reg_free(bridge, reg_id);
+            //rcar4_pcie_osid_bdf_clear(bridge, reg_id);
+            //rcar4_pcie_osid_reg_free(bridge, reg_id);
             goto free_suspend_ctx;
         }
     }
