@@ -1814,7 +1814,7 @@ static int arm_smmu_write_reg_sync(struct arm_smmu_device *smmu, u32 val,
 }
 
 /* GBPA is "special" */
-static int __init arm_smmu_update_gbpa(struct arm_smmu_device *smmu,
+static int arm_smmu_update_gbpa(struct arm_smmu_device *smmu,
                                        u32 set, u32 clr)
 {
 	int ret;
@@ -2057,7 +2057,7 @@ static int arm_smmu_device_disable(struct arm_smmu_device *smmu)
 	return ret;
 }
 
-static int __init arm_smmu_device_reset(struct arm_smmu_device *smmu)
+static int arm_smmu_device_reset(struct arm_smmu_device *smmu)
 {
 	int ret;
 	u32 reg, enables;
@@ -2163,17 +2163,20 @@ static int __init arm_smmu_device_reset(struct arm_smmu_device *smmu)
 		}
 	}
 
-	ret = arm_smmu_setup_irqs(smmu);
-	if (ret) {
-		dev_err(smmu->dev, "failed to setup irqs\n");
-		return ret;
-	}
+	if ( system_state == SYS_STATE_resume )
+	{
+		ret = arm_smmu_setup_irqs(smmu);
+		if (ret) {
+			dev_err(smmu->dev, "failed to setup irqs\n");
+			return ret;
+		}
 
-	/* Initialize tasklets for threaded IRQs*/
-	tasklet_init(&smmu->evtq_irq_tasklet, arm_smmu_evtq_tasklet, smmu);
-	tasklet_init(&smmu->priq_irq_tasklet, arm_smmu_priq_tasklet, smmu);
-	tasklet_init(&smmu->combined_irq_tasklet, arm_smmu_combined_irq_tasklet,
-				 smmu);
+		/* Initialize tasklets for threaded IRQs*/
+		tasklet_init(&smmu->evtq_irq_tasklet, arm_smmu_evtq_tasklet, smmu);
+		tasklet_init(&smmu->priq_irq_tasklet, arm_smmu_priq_tasklet, smmu);
+		tasklet_init(&smmu->combined_irq_tasklet, arm_smmu_combined_irq_tasklet,
+					smmu);
+	}
 
 	/* Enable the SMMU interface, or ensure bypass */
 	if (disable_bypass) {
@@ -2859,9 +2862,85 @@ static void arm_smmu_iommu_xen_domain_teardown(struct domain *d)
 }
 
 #ifdef CONFIG_SYSTEM_SUSPEND
+
+static int arm_smmu_drain_queues(struct arm_smmu_device *smmu)
+{
+	struct arm_smmu_cmdq *cmdq = &smmu->cmdq;
+	unsigned long flags;
+	int ret;
+
+	/*
+	 * Since this is only called from the suspend callback, we
+	 * should be able to acquire the exclusive lock without failing.
+	 */
+	spin_lock_irqsave(&cmdq->lock, flags);
+	ret = queue_poll_cons(&cmdq->q, true, 0);
+	spin_unlock_irqrestore(&cmdq->lock, flags);
+
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
 static int arm_smmu_suspend(void)
 {
-	return -ENOSYS;
+	struct arm_smmu_device *smmu;
+	int ret;
+
+	spin_lock(&arm_smmu_devices_lock);
+
+	list_for_each_entry(smmu, &arm_smmu_devices, devices)
+	{
+		/*
+		* Since suspend is invoked when all clients have been suspended,
+		* we don't expect more cmds or events to be added to the queues.
+		* Wait for all queues to be drained.
+		*/
+		ret = arm_smmu_drain_queues(smmu);
+		if (ret) {
+			dev_err(smmu->dev, "Draining queues timed-out.. retry later\n");
+			spin_unlock(&arm_smmu_devices_lock);
+			return ret;
+		}
+
+		/* Disable all queues */
+		arm_smmu_device_disable(smmu);
+
+		dev_dbg(smmu->dev, "Suspending smmu\n");
+
+		/* Abort all transactions to avoid spurious bypass */
+		arm_smmu_update_gbpa(smmu, GBPA_ABORT, 0);
+
+		dev_dbg(smmu->dev, "Suspending smmu\n");
+	}
+
+	spin_unlock(&arm_smmu_devices_lock);
+
+	return 0;
+}
+
+static void arm_smmu_resume(void)
+{
+	int ret;
+	struct arm_smmu_device *smmu;
+
+	spin_lock(&arm_smmu_devices_lock);
+
+	list_for_each_entry(smmu, &arm_smmu_devices, devices)
+	{
+		dev_dbg(smmu->dev, "Resuming device\n");
+
+		/*
+		* The reset will re-initialize all the base addresses, queues,
+		* prod and cons maintained within struct arm_smmu_device as well as
+		* re-enable the interrupts.
+		*/
+		ret = arm_smmu_device_reset(smmu);
+		if (ret)
+			dev_err(smmu->dev, "Failed to reset during resume operation: %d\n", ret);
+	}
+	spin_unlock(&arm_smmu_devices_lock);
 }
 #endif
 
@@ -2879,6 +2958,7 @@ static const struct iommu_ops arm_smmu_iommu_ops = {
 	.add_device		= arm_smmu_add_device,
 #ifdef CONFIG_SYSTEM_SUSPEND
 	.suspend		= arm_smmu_suspend,
+	.resume			= arm_smmu_resume,
 #endif
 };
 
