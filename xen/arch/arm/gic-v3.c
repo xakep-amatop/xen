@@ -857,7 +857,7 @@ static bool gicv3_enable_lpis(void)
     return true;
 }
 
-static int __init gicv3_populate_rdist(void)
+static int gicv3_populate_rdist(void)
 {
     int i;
     uint32_t aff;
@@ -927,7 +927,7 @@ static int __init gicv3_populate_rdist(void)
                     ret = gicv3_lpi_init_rdist(ptr);
                     if ( ret && ret != -ENODEV )
                     {
-                        printk("GICv3: CPU%d: Cannot initialize LPIs: %u\n",
+                        printk("GICv3: CPU%d: Cannot initialize LPIs: %d\n",
                                smp_processor_id(), ret);
                         break;
                     }
@@ -1067,12 +1067,12 @@ out:
     return res;
 }
 
-static void gicv3_hyp_disable(void)
+static void gicv3_hyp_enable(bool enable)
 {
     register_t hcr;
 
     hcr = READ_SYSREG(ICH_HCR_EL2);
-    hcr &= ~GICH_HCR_EN;
+    hcr = enable ? (hcr | GICH_HCR_EN) : (hcr & ~GICH_HCR_EN);
     WRITE_SYSREG(hcr, ICH_HCR_EL2);
     isb();
 }
@@ -1179,7 +1179,7 @@ static void gicv3_disable_interface(void)
     spin_lock(&gicv3.lock);
 
     gicv3_cpu_disable();
-    gicv3_hyp_disable();
+    gicv3_hyp_enable(false);
 
     spin_unlock(&gicv3.lock);
 }
@@ -2067,6 +2067,7 @@ static int gicv3_suspend(void)
 {
     unsigned int i;
     void __iomem *base;
+    int ret;
     struct redist_ctx *rdist = &gicv3_ctx.rdist;
 
     /* Save GICC configuration */
@@ -2077,6 +2078,11 @@ static int gicv3_suspend(void)
     gicv3_ctx.cpu.grpen    = READ_SYSREG(ICC_IGRPEN1_EL1);
 
     gicv3_disable_interface();
+
+    ret = gicv3_its_suspend();
+    if ( ret )
+        goto out_enable_iface;
+
     gicv3_disable_redist();
 
     /* Save GICR configuration */
@@ -2108,6 +2114,13 @@ static int gicv3_suspend(void)
 #endif
 
     return 0;
+
+ out_enable_iface:
+    gicv3_hyp_enable(true);
+    WRITE_SYSREG(gicv3_ctx.cpu.ctlr, ICC_CTLR_EL1);
+    isb();
+
+    return ret;
 }
 
 static void gicv3_resume(void)
@@ -2153,6 +2166,8 @@ static void gicv3_resume(void)
     writel_relaxed(rdist->ctlr, GICD_RDIST_BASE + GICR_CTLR);
 
     gicv3_redist_wait_for_rwp();
+
+    gicv3_its_resume();
 
     WRITE_SYSREG(gicv3_ctx.cpu.sre_el2, ICC_SRE_EL2);
     isb();
