@@ -862,7 +862,7 @@ static bool gicv3_enable_lpis(void)
     return true;
 }
 
-static int __init gicv3_populate_rdist(void)
+static int gicv3_populate_rdist(void)
 {
     int i;
     uint32_t aff;
@@ -932,7 +932,7 @@ static int __init gicv3_populate_rdist(void)
                     ret = gicv3_lpi_init_rdist(ptr);
                     if ( ret && ret != -ENODEV && ret != -EBUSY )
                     {
-                        printk("GICv3: CPU%d: Cannot initialize LPIs: %u\n",
+                        printk("GICv3: CPU%d: Cannot initialize LPIs: %d\n",
                                smp_processor_id(), ret);
                         break;
                     }
@@ -2101,9 +2101,13 @@ static int gicv3_suspend(void)
 
     gicv3_disable_interface();
 
-    ret = gicv3_disable_redist();
+    ret = gicv3_its_suspend();
     if ( ret )
         goto out_enable_iface;
+
+    ret = gicv3_disable_redist();
+    if ( ret )
+        goto out_its_resume;
 
     /* Save GICR configuration */
     gicv3_redist_wait_for_rwp();
@@ -2139,6 +2143,9 @@ static int gicv3_suspend(void)
 #endif
 
     return 0;
+
+ out_its_resume:
+    gicv3_its_resume();
 
  out_enable_iface:
     gicv3_hyp_enable(true);
@@ -2211,6 +2218,8 @@ static void gicv3_resume(void)
     writel_relaxed(rdist->ctlr, GICD_RDIST_BASE + GICR_CTLR);
 
     gicv3_redist_wait_for_rwp();
+
+    gicv3_its_resume();
 
     WRITE_SYSREG(gicv3_ctx.cpu.sre_el2, ICC_SRE_EL2);
     isb();
