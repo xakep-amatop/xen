@@ -1209,6 +1209,97 @@ int gicv3_its_init(void)
     return 0;
 }
 
+#ifdef CONFIG_SYSTEM_SUSPEND
+int gicv3_its_suspend(void)
+{
+    struct host_its *its;
+    int ret;
+
+    list_for_each_entry(its, &host_its_list, entry)
+    {
+        unsigned int i;
+        void __iomem *base = its->its_base;
+
+        its->suspend_ctx.ctlr = readl_relaxed(base + GITS_CTLR);
+        ret = gicv3_disable_its(its);
+        if ( ret )
+        {
+            writel_relaxed(its->suspend_ctx.ctlr, base + GITS_CTLR);
+            goto err;
+        }
+
+        its->suspend_ctx.cbaser = readq_relaxed(base + GITS_CBASER);
+
+        for (i = 0; i < GITS_BASER_NR_REGS; i++) {
+            uint64_t baser = readq_relaxed(base + GITS_BASER0 + i * 8);
+
+            if ( !(baser & GITS_VALID_BIT) )
+                continue;
+
+            its->suspend_ctx.baser[i] = baser;
+        }
+    }
+
+    return 0;
+
+ err:
+    list_for_each_entry_continue_reverse(its, &host_its_list, entry)
+        writel_relaxed(its->suspend_ctx.ctlr, its->its_base + GITS_CTLR);
+
+    return ret;
+}
+
+void gicv3_its_resume(void)
+{
+    struct host_its *its;
+    int ret;
+
+    list_for_each_entry(its, &host_its_list, entry)
+    {
+        void __iomem *base;
+        unsigned int i;
+
+        base = its->its_base;
+
+        /*
+         * Make sure that the ITS is disabled. If it fails to quiesce,
+         * don't restore it since writing to CBASER or BASER<n>
+         * registers is undefined according to the GIC v3 ITS
+         * Specification.
+         *
+         * Firmware resuming with the ITS enabled is terminally broken.
+         */
+        WARN_ON(readl_relaxed(base + GITS_CTLR) & GITS_CTLR_ENABLE);
+        ret = gicv3_disable_its(its);
+        if ( ret )
+            continue;
+
+        writeq_relaxed(its->suspend_ctx.cbaser, base + GITS_CBASER);
+
+        /*
+         * Writing CBASER resets CREADR to 0, so make CWRITER and
+         * cmd_write line up with it.
+         */
+        writeq_relaxed(0, base + GITS_CWRITER);
+
+        /* Restore GITS_BASER from the value cache. */
+        for (i = 0; i < GITS_BASER_NR_REGS; i++) {
+            uint64_t baser = its->suspend_ctx.baser[i];
+
+            if ( !(baser & GITS_VALID_BIT) )
+                continue;
+
+            writeq_relaxed(baser, base + GITS_BASER0 + i * 8);
+        }
+        writel_relaxed(its->suspend_ctx.ctlr, base + GITS_CTLR);
+    }
+
+    ret = gicv3_its_setup_collection(smp_processor_id());
+    if ( ret )
+        panic("GICv3: ITS: resume setup collection failed: %d\n", ret);
+}
+
+#endif /* CONFIG_SYSTEM_SUSPEND */
 
 /*
  * Local variables:
