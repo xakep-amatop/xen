@@ -2858,7 +2858,11 @@ static void arm_smmu_iommu_xen_domain_teardown(struct domain *d)
 #ifdef CONFIG_SYSTEM_SUSPEND
 static int arm_smmu_suspend(void)
 {
-	return -ENOSYS;
+	return 0;
+}
+
+static void arm_smmu_resume(void)
+{
 }
 #endif
 
@@ -2876,6 +2880,7 @@ static const struct iommu_ops arm_smmu_iommu_ops = {
 	.add_device		= arm_smmu_add_device,
 #ifdef CONFIG_SYSTEM_SUSPEND
 	.suspend		= arm_smmu_suspend,
+	.resume			= arm_smmu_resume,
 #endif
 };
 

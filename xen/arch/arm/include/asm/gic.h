@@ -144,7 +144,8 @@
  * A GIC must support a mimimum of 16 priority levels.
  */
 #define GIC_PRI_LOWEST     0xf0U
-#define GIC_PRI_IRQ        0xa0U
+#define GIC_PRI_IRQ        0xb0U
+#define GIC_PRI_IPI_FFA    0xa0U 
 #define GIC_PRI_IPI        0x90U /* IPIs must preempt normal interrupts */
 #define GIC_PRI_HIGHEST    0x80U /* Higher priorities belong to Secure-World */
 #define GIC_PRI_IRQ_ALL    ((GIC_PRI_IRQ << 24) | (GIC_PRI_IRQ << 16) |\

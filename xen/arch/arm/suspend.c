@@ -16,6 +16,7 @@ struct cpu_context cpu_context = {};
 static void cf_check system_suspend(void *data)
 {
     int status;
+    unsigned dbg = 0;
     unsigned long flags;
 
     BUG_ON(system_state != SYS_STATE_active);
@@ -51,13 +52,15 @@ static void cf_check system_suspend(void *data)
     }
 
     console_start_sync();
-    status = console_suspend();
+    //status = console_suspend();
     if ( status )
     {
         dprintk(XENLOG_ERR, "Failed to suspend the console, err=%d\n", status);
         system_state = SYS_STATE_resume;
         goto resume_console;
     }
+
+    printk("%s:%d\n", __func__, __LINE__);
 
     local_irq_save(flags);
     status = gic_suspend();
@@ -67,7 +70,11 @@ static void cf_check system_suspend(void *data)
         goto resume_irqs;
     }
 
+    printk("%s:%d\n", __func__, __LINE__);
+
     set_init_ttbr(xen_pgtable);
+
+    printk("%s:%d\n", __func__, __LINE__);
 
     /*
      * Enable identity mapping before entering suspend to simplify
@@ -92,6 +99,7 @@ static void cf_check system_suspend(void *data)
         if ( status )
             dprintk(XENLOG_WARNING, "PSCI system suspend failed, err=%d\n",
                     status);
+        dbg = 1;
     }
 
     system_state = SYS_STATE_resume;
@@ -103,7 +111,7 @@ static void cf_check system_suspend(void *data)
     local_irq_restore(flags);
 
  resume_console:
-    console_resume();
+    //console_resume();
     console_end_sync();
 
     iommu_resume();
@@ -125,7 +133,7 @@ static void cf_check system_suspend(void *data)
 
     system_state = SYS_STATE_active;
 
-    printk("Resume (status %d)\n", status);
+    printk("Resume (status %d, dbg %d)\n", status, dbg);
 
     /* The resume of hardware domain should always follow Xen's resume. */
     domain_resume(hardware_domain);
