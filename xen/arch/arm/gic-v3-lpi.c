@@ -372,8 +372,15 @@ int gicv3_lpi_init_rdist(void __iomem * rdist_base)
 
     /* Make sure LPIs are disabled before setting up the tables. */
     reg = readl_relaxed(rdist_base + GICR_CTLR);
+
+    /*
+     * Do nothing if LPIs are already enabled on resume. Two options:
+     * 1) Firmware restored the LPI tables in EL3 and left LPIs enabled
+     * 2) The redistributor stayed enabled because its power domain wasn't
+     *    powered off during system susoend.
+     */
     if ( reg & GICR_CTLR_ENABLE_LPIS )
-        return -EBUSY;
+        return system_state == SYS_STATE_resume ? 0 : -EBUSY;
 
     ret = gicv3_lpi_set_pendtable(rdist_base);
     if ( ret )
