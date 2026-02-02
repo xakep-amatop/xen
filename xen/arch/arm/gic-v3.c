@@ -45,6 +45,76 @@ static struct {
 
 static struct gic_info gicv3_info;
 
+#ifdef CONFIG_GICV4
+/* Global state */
+static struct {
+    bool is_gicv4;
+    bool has_vlpis;
+    bool has_direct_lpi;
+    bool has_vpend_valid_dirty;
+    bool has_rvpeid;
+} gicv4 = { .has_vlpis = true, .has_direct_lpi = true,
+            .has_vpend_valid_dirty = true, .has_rvpeid = true, };
+
+
+bool gic_support_directLPI(void)
+{
+    return gicv4.has_direct_lpi;
+}
+
+bool gic_support_vptValidDirty(void)
+{
+    return gicv4.has_vpend_valid_dirty;
+}
+
+bool gic_has_v4_1_extension(void)
+{
+    return gicv4.has_rvpeid;
+}
+
+bool gic_is_gicv4(void)
+{
+    return gicv4.is_gicv4;
+}
+
+static void __init gicv4_update_lpi_properties(void __iomem *ptr)
+{
+    uint64_t typer;
+    uint32_t ctlr;
+
+    typer = readq_relaxed(ptr + GICR_TYPER);
+    ctlr = readl_relaxed(ptr + GICR_CTLR);
+
+    /*
+     * GICR_CTLR.IR also mandates the invalidate/sync registers.
+     * RVPEID identifies the GICv4.1 vPE model, which implies the same
+     * registers even when GICR_TYPER.DirectLPIS is clear.
+     */
+    /* If any redistributor lacks a feature, disable it system-wide. */
+    gicv4.has_vlpis &= !!(typer & GICR_TYPER_VLPIS);
+    gicv4.has_rvpeid &= !!(typer & GICR_TYPER_RVPEID);
+    gicv4.has_direct_lpi &= !!(typer & GICR_TYPER_DirectLPIS) ||
+                           !!(ctlr & GICR_CTLR_IR) ||
+                           !!(typer & GICR_TYPER_RVPEID);
+    gicv4.has_vpend_valid_dirty &= !!(typer & GICR_TYPER_DIRTY);
+
+    /* Detect non-sensical configurations */
+    if ( gicv4.has_rvpeid && !gicv4.has_vlpis )
+    {
+        gicv4.has_direct_lpi = false;
+        gicv4.has_rvpeid = false;
+    }
+
+    printk("GICv4: CPU%d: %sVLPI support, %sdirect LPI support, %sValid+Dirty support, %sRVPEID support\n",
+           smp_processor_id(), typer & GICR_TYPER_VLPIS ? "" : "no ",
+           (typer & GICR_TYPER_DirectLPIS) ||
+           (ctlr & GICR_CTLR_IR) ||
+           (typer & GICR_TYPER_RVPEID) ? "" : "no ",
+           typer & GICR_TYPER_DIRTY ? "" : "no ",
+           typer & GICR_TYPER_RVPEID ? "" : "no ");
+}
+#endif
+
 /* per-cpu re-distributor base */
 static DEFINE_PER_CPU(void __iomem*, rbase);
 
@@ -903,6 +973,10 @@ static int __init gicv3_populate_rdist(void)
             {
                 this_cpu(rbase) = ptr;
 
+#ifdef CONFIG_GICV4
+                gicv4_update_lpi_properties(ptr);
+#endif
+
                 if ( typer & GICR_TYPER_PLPIS )
                 {
                     paddr_t rdist_addr;
@@ -934,7 +1008,7 @@ static int __init gicv3_populate_rdist(void)
                 }
 
                 printk("GICv3: CPU%d: Found redistributor in region %d @%p\n",
-                        smp_processor_id(), i, ptr);
+                       smp_processor_id(), i, ptr);
                 return 0;
             }
 
@@ -1936,6 +2010,10 @@ static int __init gicv3_init(void)
     reg = readl_relaxed(GICD + GICD_PIDR2) & GIC_PIDR2_ARCH_MASK;
     if ( reg != GIC_PIDR2_ARCH_GICv3 && reg != GIC_PIDR2_ARCH_GICv4 )
          panic("GICv3: no distributor detected\n");
+
+#ifdef CONFIG_GICV4
+    gicv4.is_gicv4 = (reg == GIC_PIDR2_ARCH_GICv4);
+#endif
 
     for ( i = 0; i < gicv3.rdist_count; i++ )
     {
