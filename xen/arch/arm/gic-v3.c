@@ -1991,14 +1991,27 @@ static bool gic_dist_supports_lpis(void)
 }
 
 #ifdef CONFIG_GICV4
-static void __init gicv4_init(void)
+static int __init gicv4_init(void)
 {
+    int ret;
+
     gicv4_its_vpeid_allocator_init();
+
+    ret = gicv4_init_vpe_proxy();
+    if ( ret )
+    {
+        printk(XENLOG_ERR
+               "GICv4: failed to initialize VPE proxy device: %d\n", ret);
+        return ret;
+    }
+
+    return 0;
 }
 #else
-static void __init gicv4_init(void)
+static int __init gicv4_init(void)
 {
     ASSERT_UNREACHABLE();
+    return -EINVAL;
 }
 #endif
 
@@ -2079,7 +2092,11 @@ static int __init gicv3_init(void)
     gicv3_hyp_init();
 
     if ( gic_support_vlpis() )
-        gicv4_init();
+    {
+        res = gicv4_init();
+        if ( res )
+            goto out;
+    }
 out:
     spin_unlock(&gicv3.lock);
 
