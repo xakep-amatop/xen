@@ -64,6 +64,8 @@
 #define GITS_BASER_INNER_CACHEABILITY_SHIFT        59
 #define GITS_BASER_TYPE_SHIFT           56
 #define GITS_BASER_TYPE_MASK            (7ULL << GITS_BASER_TYPE_SHIFT)
+#define GITS_BASER_TYPE(reg)                                    \
+    ((reg & GITS_BASER_TYPE_MASK) >> GITS_BASER_TYPE_SHIFT)
 #define GITS_BASER_OUTER_CACHEABILITY_SHIFT        53
 #define GITS_BASER_TYPE_NONE            0UL
 #define GITS_BASER_TYPE_DEVICE          1UL
@@ -143,6 +145,17 @@ struct its_device {
 #endif
 };
 
+/*
+ * The ITS_BASER structure - contains memory information, cached
+ * value of BASER register configuration.
+ */
+struct its_baser {
+    void            *base;
+    uint64_t        val;
+    unsigned int    table_size;
+    unsigned int    pagesz;
+};
+
 /* data structure for each hardware ITS */
 struct host_its {
     struct list_head entry;
@@ -156,6 +169,7 @@ struct host_its {
     spinlock_t cmd_lock;
     void *cmd_buf;
     unsigned int flags;
+    struct its_baser tables[GITS_BASER_NR_REGS];
 };
 
 /* Map a collection for this host CPU to each host ITS. */
@@ -241,6 +255,8 @@ int its_send_cmd_vinv(struct host_its *its, struct its_device *dev,
                       uint32_t eventid);
 
 int its_send_command(struct host_its *hw_its, const void *its_cmd);
+
+struct its_baser *its_get_baser(struct host_its *hw_its, uint32_t type);
 
 int gicv3_its_wait_commands(struct host_its *hw_its);
 int its_inv_lpi(struct host_its *its, struct its_device *dev, uint32_t eventid,
