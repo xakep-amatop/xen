@@ -2002,6 +2002,8 @@ static bool gic_dist_supports_lpis(void)
 static void __init gicv4_init(void)
 {
     gicv4_its_vpeid_allocator_init();
+
+    gicv4_init_vpe_proxy();
 }
 #else
 static void __init gicv4_init(void)

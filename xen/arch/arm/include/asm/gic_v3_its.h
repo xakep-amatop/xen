@@ -302,9 +302,14 @@ int its_send_cmd_vinv(struct host_its *its, struct its_device *dev,
                       uint32_t eventid);
 int its_send_cmd_discard(struct host_its *its, struct its_device *dev,
                          uint32_t eventid);
+int its_send_cmd_movi(struct host_its *its, uint32_t deviceid, uint32_t eventid,
+                      uint16_t icid);
+int its_send_cmd_sync(struct host_its *its, unsigned int cpu);
 
 int its_send_command(struct host_its *hw_its, const void *its_cmd);
 
+struct its_device *its_create_device(struct host_its *hw_its,
+                                     uint32_t host_devid, uint64_t nr_events);
 struct its_baser *its_get_baser(struct host_its *hw_its, uint32_t type);
 int its_alloc_table_entry(struct its_baser *baser, uint32_t id);
 struct page_info *lpi_allocate_pendtable(void);
@@ -331,6 +336,8 @@ int gicv4_its_vlpi_move(struct pending_irq *pirq, struct vcpu *vcpu);
 int gicv4_its_vlpi_unmap(struct pending_irq *pirq);
 int its_vlpi_prop_update(struct pending_irq *pirq, uint8_t property,
                          bool needs_inv);
+void direct_lpi_inv(struct its_device *dev, uint32_t eventid,
+                    uint32_t db_lpi, unsigned int cpu);
 
 bool event_is_forwarded_to_vcpu(struct its_device *dev, uint32_t eventid);
 void its_vpe_mask_db(struct its_vpe *vpe);
