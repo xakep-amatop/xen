@@ -116,6 +116,27 @@
 /* We allocate LPIs on the hosts in chunks of 32 to reduce handling overhead. */
 #define LPI_BLOCK                       32U
 
+/*
+ * Describes a device which is using the ITS and is used by a guest.
+ * Since device IDs are per ITS (in contrast to vLPIs, which are per
+ * guest), we have to differentiate between different virtual ITSes.
+ * We use the doorbell address here, since this is a nice architectural
+ * property of MSIs in general and we can easily get to the base address
+ * of the ITS and look that up.
+ */
+struct its_device {
+    struct rb_node rbnode;
+    struct host_its *hw_its;
+    unsigned int itt_order;
+    void *itt_addr;
+    paddr_t guest_doorbell;             /* Identifies the virtual ITS */
+    uint32_t host_devid;
+    uint32_t guest_devid;
+    uint32_t eventids;                  /* Number of event IDs (MSIs) */
+    uint32_t *host_lpi_blocks;          /* Which LPIs are used on the host */
+    struct pending_irq *pend_irqs;      /* One struct per event */
+};
+
 /* data structure for each hardware ITS */
 struct host_its {
     struct list_head entry;
@@ -203,6 +224,16 @@ void gicv3_lpi_update_host_entry(uint32_t host_lpi, int domain_id,
 uint64_t gicv3_its_get_cacheability(void);
 uint64_t gicv3_its_get_shareability(void);
 unsigned int gicv3_its_get_memflags(void);
+
+int its_send_cmd_inv(struct host_its *its, uint32_t deviceid, uint32_t eventid);
+int its_send_cmd_clear(struct host_its *its, uint32_t deviceid, uint32_t eventid);
+int its_send_cmd_mapti(struct host_its *its, uint32_t deviceid,
+                       uint32_t eventid, uint32_t pintid, uint16_t icid);
+
+int its_send_command(struct host_its *hw_its, const void *its_cmd);
+
+struct its_device *get_its_device(struct domain *d, paddr_t vdoorbell,
+                                  uint32_t vdevid);
 
 #else
 
