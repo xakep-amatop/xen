@@ -11,6 +11,7 @@ config ARM_64
 	select HAS_VPCI_GUEST_SUPPORT if PCI_PASSTHROUGH
 	select HAS_ITS
 	select GICV4
+	select GICV3_ESPI
 
 config ARM
 	def_bool y
