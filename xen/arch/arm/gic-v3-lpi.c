@@ -429,7 +429,7 @@ int gicv3_lpi_init_rdist(void __iomem * rdist_base)
     /* Make sure LPIs are disabled before setting up the tables. */
     reg = readl_relaxed(rdist_base + GICR_CTLR);
     if ( reg & GICR_CTLR_ENABLE_LPIS )
-        return -EBUSY;
+        writel(reg & ~GICR_CTLR_ENABLE_LPIS, rdist_base + GICR_CTLR);
 
     ret = gicv3_lpi_set_pendtable(rdist_base);
     if ( ret )
