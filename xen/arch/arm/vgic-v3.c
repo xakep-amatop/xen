@@ -21,6 +21,7 @@
 #include <asm/current.h>
 #include <asm/gic_v3_defs.h>
 #include <asm/gic_v3_its.h>
+#include <asm/io.h>
 #include <asm/mmio.h>
 #include <asm/vgic.h>
 #include <asm/vgic-emul.h>
@@ -818,6 +819,7 @@ static int __vgic_v3_distr_common_mmio_write(const char *name, struct vcpu *v,
     struct vgic_irq_rank *rank;
     uint32_t tr;
     unsigned long flags;
+    int rank_nr;
 
     switch ( reg )
     {
@@ -919,12 +921,17 @@ static int __vgic_v3_distr_common_mmio_write(const char *name, struct vcpu *v,
         rank = vgic_common_rank_offset(v, 8, reg, DABT_WORD, GICD_IPRIORITYR,
                                        GICD_IPRIORITYRnE);
         if ( rank == NULL ) goto write_ignore;
+        rank_nr = REG_RANK_NR(8, (reg - GICD_IPRIORITYR) >> DABT_WORD);
         offset = vgic_get_reg_offset(reg, GICD_IPRIORITYR, GICD_IPRIORITYRnE);
         vgic_lock_rank(v, rank, flags);
         ipriorityr = &rank->ipriorityr[REG_RANK_INDEX(8, offset, DABT_WORD)];
         priority = ACCESS_ONCE(*ipriorityr);
         vreg_reg32_update(&priority, r, info);
         ACCESS_ONCE(*ipriorityr) = priority;
+        /* Is it HW-based VSGI? */
+        if ( (rank_nr == 0) && (rank->index < 16) &&
+             guest_support_nassgi(v->domain) )
+            its_sgi_prop_update(v, rank->index, priority);
         vgic_unlock_rank(v, rank, flags);
         return 1;
     }
