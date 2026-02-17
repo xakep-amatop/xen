@@ -1776,6 +1776,196 @@ int allocate_vpe_l1_table(void)
     return 0;
 }
 
+static int its_send_cmd_vsgi(struct host_its *its, uint8_t vsgi_irq,
+                             struct its_vpe *vpe, bool clear)
+{
+    uint64_t cmd[4];
+    uint16_t vpeid = vpe->vpe_id;
+    uint8_t priority = vpe->sgi_config[vsgi_irq].priority;
+    int ret;
+
+    if ( vsgi_irq > 15 )
+        return -EINVAL;
+
+    cmd[0] = GITS_CMD_VSGI | ((uint64_t)vsgi_irq << 32) |
+             ((uint64_t)priority << 20);
+    cmd[0] |= vpe->sgi_config[vsgi_irq].enabled ? GITS_ENABLE_BIT : 0;
+    cmd[0] |= vpe->sgi_config[vsgi_irq].group ? GITS_GROUP_BIT : 0;
+    cmd[0] |= clear ?  GITS_CLEAR_BIT : 0;
+    cmd[1] = (uint64_t)vpeid << 32;
+    cmd[2] = 0x00;
+    cmd[3] = 0x00;
+
+    ret = its_send_command(its, cmd);
+    if ( ret )
+        return ret;
+
+    ret = its_send_cmd_vsync(its, vpeid);
+
+    return ret;
+}
+
+int vgic_v4_configure_vcpu_sgi(struct vcpu *v)
+{
+    unsigned int i;
+    struct host_its *hw_its;
+    struct its_vpe *vpe = v->arch.vgic.its_vpe;
+    int ret;
+
+    hw_its = find_4_1_its();
+    if ( !hw_its )
+        return -ENOENT;
+
+    for ( i = 0; i < VGIC_NR_SGIS; i++ )
+    {
+        vpe->sgi_config[i].enabled = false;
+        vpe->sgi_config[i].group = true;
+        vpe->sgi_config[i].priority = 0;
+
+         /* Write out the initial VSGI configuration */
+        ret = its_send_cmd_vsgi(hw_its, i, vpe, false);
+        if ( ret )
+            return ret;
+    }
+
+    return 0;
+}
+
+int its_sgi_mask_irq(struct vcpu *v, unsigned int irq)
+{
+    int ret;
+    struct its_vpe *vpe = v->arch.vgic.its_vpe;
+    struct host_its *hw_its;
+
+    ASSERT(irq < 16);
+
+    hw_its = find_4_1_its();
+    if ( !hw_its )
+        return -EINVAL;
+
+    vpe->sgi_config[irq].enabled = false;
+    ret = its_send_cmd_vsgi(hw_its, irq, vpe, false);
+    if ( ret )
+        return ret;
+
+    return 0;
+}
+
+int its_sgi_unmask_irq(struct vcpu *v, unsigned int irq)
+{
+    int ret;
+    struct its_vpe *vpe = v->arch.vgic.its_vpe;
+    struct host_its *hw_its;
+
+    ASSERT(irq < 16);
+
+    hw_its = find_4_1_its();
+    if ( !hw_its )
+        return -EINVAL;
+
+    vpe->sgi_config[irq].enabled = true;
+    ret = its_send_cmd_vsgi(hw_its, irq, vpe, false);
+    if ( ret )
+        return ret;
+
+    return 0;
+}
+
+int its_sgi_get_pending_state(struct vcpu *v, uint32_t *ipending)
+{
+    struct its_vpe *vpe = v->arch.vgic.its_vpe;
+    void __iomem *base;
+    uint32_t status;
+    uint32_t count = 1000000;    /* 1s! */
+    unsigned int cpu;
+    unsigned long flags;
+
+    /*
+     * We can race against the following events:
+     *
+     * - Concurrent vPE affinity change: we must make sure it cannot
+     *   happen, or we'll talk to the wrong redistributor. This is
+     *   identical to what happens with vLPIs.
+     */
+    cpu = vpe_to_cpuid_lock(vpe, &flags);
+    base = gic_data_rdist_vlpi_base(cpu);
+    writel_relaxed(vpe->vpe_id, base + GICR_VSGIR);
+    do {
+        status = readl_relaxed(base + GICR_VSGIPENDR);
+        /* Wait until BUSY is cleared */
+        if ( !(status & GICR_VSGIPENDR_BUSY) )
+            goto out;
+
+        count--;
+        if ( !count )
+        {
+            printk(XENLOG_G_ERR "%pv: unable to get SGI pending status\n", v);
+            goto out;
+        }
+        cpu_relax();
+        udelay(1);
+    } while ( count );
+
+ out:
+    vpe_to_cpuid_unlock(vpe, &flags);
+
+    if ( !count )
+        return -ENXIO;
+
+    *ipending = status & GICR_VSGIPENDR_PENDING;
+
+    return 0;
+}
+
+int its_sgi_set_pending_state(struct vcpu *v, unsigned int vsgi, bool state)
+{
+    struct its_vpe *vpe = v->arch.vgic.its_vpe;
+    struct host_its *its = find_4_1_its();
+    uint64_t val;
+    int ret = 0;
+
+    if ( !its )
+        return -ENODEV;
+
+    if ( state )
+    {
+        val = FIELD_PREP(GITS_SGIR_VPEID, vpe->vpe_id);
+        val |= FIELD_PREP(GITS_SGIR_VINTID, vsgi);
+        writeq_relaxed(val, its->sgir_base + GITS_SGIR);
+
+    }
+    else
+    {
+         /*
+          * Clearing the pending bit by emiting a VSGI command with
+          * the "clear" bit set
+          */
+        ret = its_send_cmd_vsgi(its, vsgi, vpe, true);
+    }
+
+    return ret;
+}
+
+int its_sgi_prop_update(struct vcpu *v, unsigned int irq, uint8_t priority)
+{
+    int ret;
+    struct its_vpe *vpe = v->arch.vgic.its_vpe;
+    struct host_its *hw_its;
+
+    ASSERT(irq < 16);
+
+    hw_its = find_4_1_its();
+    if ( !hw_its )
+        return -EINVAL;
+
+    vpe->sgi_config[irq].priority = priority;
+    ret = its_send_cmd_vsgi(hw_its, irq, vpe, false);
+    if ( ret )
+        return ret;
+
+    return 0;
+}
+
 /*
  * Local variables:
  * mode: C
