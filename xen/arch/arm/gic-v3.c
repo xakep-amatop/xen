@@ -2032,6 +2032,9 @@ static bool gic_dist_supports_lpis(void)
 #ifdef CONFIG_GICV4
 static void __init gicv4_init(void)
 {
+    if ( gic_has_v4_1_extension() )
+        gicv3_info.hw_version = GIC_V4_1;
+    else
         gicv3_info.hw_version = GIC_V4;
 
 
