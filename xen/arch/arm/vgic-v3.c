@@ -981,6 +981,9 @@ static int vgic_v3_rdistr_sgi_mmio_read(struct vcpu *v, mmio_info_t *info,
                                         uint32_t gicr_reg, register_t *r)
 {
     struct hsr_dabt dabt = info->dabt;
+    struct vgic_irq_rank *rank;
+    unsigned long flags;
+    int ret;
 
     switch ( gicr_reg )
     {
@@ -998,8 +1001,36 @@ static int vgic_v3_rdistr_sgi_mmio_read(struct vcpu *v, mmio_info_t *info,
         return __vgic_v3_distr_common_mmio_read("vGICR: SGI", v, info,
                                                 gicr_reg, r);
 
-    /* Read the pending status of an SGI is via GICR is not supported */
+    /*
+     * Read the pending status of an SGI is via GICR is not supported,
+     * except with GICv4.1
+     */
     case VREG32(GICR_ISPENDR0):
+    {
+        if ( guest_support_nassgi(v->domain) )
+        {
+            uint32_t ipending;
+
+            if ( dabt.size != DABT_WORD )
+                goto bad_width;
+
+            rank = vgic_rank_offset(v, 1, gicr_reg - GICR_ISPENDR0, DABT_WORD);
+            if ( rank == NULL )
+                goto read_as_zero;
+            vgic_lock_rank(v, rank, flags);
+            ret = its_sgi_get_pending_state(v, &ipending);
+            if ( ret )
+            {
+                vgic_unlock_rank(v, rank, flags);
+                goto bad_vsgi_read;
+            }
+            *r = vreg_reg32_extract(ipending, info);
+            vgic_unlock_rank(v, rank, flags);
+            return 1;
+        }
+        else
+            goto read_as_zero;
+    }
     case VREG32(GICR_ICPENDR0):
         goto read_as_zero;
 
@@ -1051,6 +1082,10 @@ read_reserved:
     *r = 0;
     return 1;
 
+bad_vsgi_read:
+    printk(XENLOG_G_ERR "%pv: vGICR: SGI: bad read r%d offset %#08x: %d\n",
+           v, dabt.reg, gicr_reg, ret);
+    return 0;
 }
 
 static int vgic_v3_rdistr_sgi_mmio_write(struct vcpu *v, mmio_info_t *info,
