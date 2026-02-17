@@ -30,6 +30,9 @@
 #include <asm/gic.h>
 #include <asm/gic_v3_defs.h>
 #include <asm/gic_v3_its.h>
+#ifdef CONFIG_GICV4
+#include <asm/gic_v4_its.h>
+#endif
 #include <asm/io.h>
 #include <asm/sysregs.h>
 
@@ -74,6 +77,15 @@ bool gic_has_v4_1_extension(void)
 bool gic_is_gicv4(void)
 {
     return gicv4.has_vlpis;
+}
+
+void gicv4_its_init_nvpeid(void)
+{
+    uint32_t reg;
+
+    reg = readl_relaxed(gicv3.map_dbase + GICD_TYPER2);
+    if ( gic_has_v4_1_extension() && (reg & GICD_TYPER2_VIL) )
+        nvpeid = 1 + (reg & GICD_TYPER2_VID);
 }
 #endif
 
@@ -1092,6 +1104,23 @@ static int gicv3_cpu_init(void)
         ret = gicv3_its_setup_collection(smp_processor_id());
         if ( ret )
             return ret;
+
+#ifdef CONFIG_GICV4
+        if ( gic_has_v4_1_extension() )
+        {
+            ret = allocate_vpe_l1_table();
+            if ( ret )
+            {
+                /*
+                 * If the allocation has failed, at least let's disable
+                 * direct injection.
+                 */
+                gicv4.has_rvpeid = false;
+                gicv4.has_vlpis = false;
+                return ret;
+            }
+        }
+#endif
     }
 
     /* Set priority on PPI and SGI interrupts */

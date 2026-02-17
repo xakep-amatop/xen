@@ -1563,6 +1563,9 @@ int gicv3_its_init(void)
     else
         gicv3_its_acpi_init();
 
+    if ( gic_has_v4_1_extension() )
+        gicv4_its_init_nvpeid();
+
     list_for_each_entry(hw_its, &host_its_list, entry)
     {
         ret = gicv3_its_init_single_its(hw_its);

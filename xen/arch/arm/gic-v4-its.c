@@ -20,11 +20,15 @@
 
 #include <xen/delay.h>
 #include <xen/errno.h>
+#include <xen/init.h>
+#include <xen/lib.h>
 #include <xen/sched.h>
 #include <xen/spinlock.h>
+
 #include <asm/gic_v3_defs.h>
 #include <asm/gic_v3_its.h>
 #include <asm/gic_v4_its.h>
+#include <asm/io.h>
 #include <asm/vgic.h>
 
 
@@ -45,6 +49,11 @@ static struct {
     struct its_vpe **vpes;
     int next_victim;
 } vpe_proxy;
+
+/* per-re-distributor VPE affinity group */
+DEFINE_PER_CPU(cpumask_t*, vpe_table_mask);
+#define vpe_table_mask_cpu(cpu) (per_cpu(vpe_table_mask, cpu))
+#define VPE_TABLE_MASK          (this_cpu(vpe_table_mask))
 
 void __init gicv4_its_vpeid_allocator_init(void)
 {
@@ -102,9 +111,83 @@ static void __init its_free_vpeid(uint32_t vpe_id)
     spin_unlock(&vpeid_alloc_lock);
 }
 
+static bool allocate_vpe_l2_table(unsigned int cpu, uint32_t id)
+{
+    void __iomem *rdbase = per_cpu(rbase, cpu);
+    unsigned int psz, esz, idx, npg, gpsz;
+    uint64_t val;
+    void *buffer;
+    __le64 *table;
+    paddr_t pa;
+
+    /* Skip non-present CPUs */
+    if ( !rdbase )
+        return true;
+
+    val = gits_read_vpropbaser(gic_data_rdist_vlpi_base(cpu) +
+                               GICR_VPROPBASER);
+
+    gpsz = FIELD_GET(GICR_VPROPBASER_4_1_PAGE_SIZE, val);
+    esz = FIELD_GET(GICR_VPROPBASER_4_1_ENTRY_SIZE, val) + 1;
+    npg  = FIELD_GET(GICR_VPROPBASER_4_1_SIZE, val) + 1;
+
+    switch ( gpsz ) {
+    default:
+        WARN_ON(1);
+        fallthrough;
+    case GIC_PAGE_SIZE_4K:
+        psz = SZ_4K;
+        break;
+    case GIC_PAGE_SIZE_16K:
+        psz = SZ_16K;
+        break;
+    case GIC_PAGE_SIZE_64K:
+        psz = SZ_64K;
+        break;
+    }
+
+    /* Don't allow vpe_id that exceeds single, flat table limit */
+    if ( !(val & GICR_VPROPBASER_4_1_INDIRECT) )
+        return (id < (npg * psz / (esz * SZ_8)));
+
+    /* Compute 1st level table index and check if that exceeds table limit */
+    idx = id >> ilog2(psz / (esz * SZ_8));
+    if ( idx >= (npg * psz / GITS_LVL1_ENTRY_SIZE) )
+        return false;
+
+    pa = FIELD_GET(GICR_VPROPBASER_4_1_ADDR, val);
+    table = (__le64 *)maddr_to_virt(pa << 12);
+
+    /* Allocate memory for 2nd level table */
+    if ( !table[idx] )
+    {
+        buffer = _xzalloc(psz, psz);
+        printk(XENLOG_G_INFO "Allocated VPE L2 table for virt %px phys %lx\n",
+               buffer, virt_to_maddr(buffer));
+        if ( !buffer )
+            return false;
+
+        /* Flush Lvl2 table if hw doesn't support coherency */
+        if ( !(val & GICR_VPROPBASER_SHAREABILITY_MASK) )
+            clean_and_invalidate_dcache_va_range(buffer, psz);
+
+        table[idx] = cpu_to_le64(virt_to_maddr(buffer) | GITS_BASER_VALID);
+
+        /* Flush Lvl1 entry to PoC if hw doesn't support coherency */
+        if ( !(val & GICR_VPROPBASER_SHAREABILITY_MASK) )
+            clean_and_invalidate_dcache_va_range(table + idx, GITS_LVL1_ENTRY_SIZE);
+
+        /* Ensure updated table contents are visible to RD hardware */
+        dsb(sy);
+    }
+
+    return true;
+}
+
 static bool __init its_alloc_vpe_entry(uint32_t vpe_id)
 {
     struct host_its *hw_its;
+    unsigned int cpu;
 
     /*
      * Make sure the L2 tables are allocated on *all* v4 ITSs. We
@@ -126,6 +209,18 @@ static bool __init its_alloc_vpe_entry(uint32_t vpe_id)
         if ( !its_alloc_table_entry(baser, vpe_id) )
             return false;
     }
+
+    /* Non v4.1? No need to iterate RDs and go back early. */
+    if ( !gic_has_v4_1_extension() )
+        return true;
+
+    /*
+     * Make sure the L2 tables are allocated for all copies of
+     * the L1 table on *all* v4.1 RDs.
+     */
+    for_each_possible_cpu(cpu)
+        if ( !allocate_vpe_l2_table(cpu, vpe_id) )
+            return false;
 
     return true;
 }
@@ -1153,3 +1248,223 @@ int its_set_vlpi_state(struct pending_irq *pirq, bool state)
 
     return ret;
 }
+
+static uint64_t inherit_vpe_l1_table_from_rd(void)
+{
+    uint32_t aff;
+    uint64_t val;
+    unsigned int cpu;
+    void __iomem *rbase;
+
+    val = readl_relaxed(GICD_RDIST_BASE + GICR_TYPER);
+    aff = compute_common_aff(val);
+
+    for_each_present_cpu ( cpu )
+    {
+        if ( cpu == smp_processor_id() )
+            continue;
+
+        if ( !cpu_online(cpu) )
+            continue;
+
+
+        rbase = GICD_RDIST_BASE_CPU(cpu);
+
+        val = readl_relaxed(rbase + GICR_TYPER);
+        if ( aff != compute_common_aff(val) )
+            continue;
+
+        /*
+         * At this point, we have found a particular CPU, which has
+         * already booted, and its Redistributors lives in the same
+         * CommonLPIAff group. Then we must inherit its VPROPBASER
+         * to ensure they share the same copy of VPE configuration table.
+         * Make sure we don't write the Z bit in that case.
+         */
+        val = gits_read_vpropbaser(gic_data_rdist_vlpi_base(cpu) +
+                                   GICR_VPROPBASER);
+        val &= ~GICR_VPROPBASER_4_1_Z;
+
+        /*
+         * All redistributors in the same CommonLPIaff group
+         * share the same copy.
+         */
+        VPE_TABLE_MASK = vpe_table_mask_cpu(cpu);
+
+        return val;
+    }
+
+    return 0;
+}
+
+static uint64_t __maybe_unused inherit_vpe_l1_table_from_its(void)
+{
+    struct host_its *its;
+    uint64_t val;
+    uint32_t aff;
+
+    val = readl_relaxed(GICD_RDIST_BASE + GICR_TYPER);
+    aff = compute_common_aff(val);
+
+    list_for_each_entry(its, &host_its_list, entry)
+    {
+        uint64_t typer, baser;
+        paddr_t addr;
+
+        if ( !its->is_v4_1 )
+            continue;
+
+        typer = readq_relaxed(its->its_base + GITS_TYPER);
+        if ( !FIELD_GET(GITS_TYPER_SVPET, typer) )
+            continue;
+
+        if ( aff != compute_its_aff(its) )
+            continue;
+
+        /* GICv4.1 guarantees that the vPE table is GITS_BASER2 */
+        baser = its->tables[2].val;
+        if ( !(baser & GITS_BASER_VALID) )
+            continue;
+
+        /* We have found an ITS, from which we shall inherit vPE table */
+        val = GICR_VPROPBASER_4_1_VALID;
+        if ( baser & GITS_BASER_INDIRECT )
+            val |= GICR_VPROPBASER_4_1_INDIRECT;
+        val |= FIELD_PREP(GICR_VPROPBASER_4_1_PAGE_SIZE,
+                          FIELD_GET(GITS_BASER_PAGE_SIZE_MASK, baser));
+        switch ( FIELD_GET(GITS_BASER_PAGE_SIZE_MASK, baser) )
+        {
+        case GIC_PAGE_SIZE_64K:
+            addr = GITS_BASER_ADDR_48_to_52(baser);
+            break;
+        default:
+            addr = baser & GENMASK(47, 12);
+            break;
+        }
+        val |= FIELD_PREP(GICR_VPROPBASER_4_1_ADDR, addr >> 12);
+        val |= FIELD_PREP(GICR_VPROPBASER_SHAREABILITY_MASK,
+                  FIELD_GET(GITS_BASER_SHAREABILITY_MASK, baser));
+        val |= FIELD_PREP(GICR_VPROPBASER_INNER_CACHEABILITY_MASK,
+                  FIELD_GET(GITS_BASER_INNER_CACHEABILITY_MASK, baser));
+        val |= FIELD_PREP(GICR_VPROPBASER_4_1_SIZE,
+                          GITS_BASER_NR_PAGES(baser) - 1);
+
+        return val;
+    }
+
+    return 0;
+}
+
+int allocate_vpe_l1_table(void)
+{
+    void __iomem *vlpi_base = gic_data_rdist_vlpi_base(smp_processor_id());
+    void __iomem *buffer;
+    uint64_t val, gpsz, npg, pa;
+    unsigned int psz = SZ_64K;
+    unsigned int epp, esz;
+
+    if ( !gic_has_v4_1_extension() )
+        return 0;
+
+    /*
+     * if VPENDBASER.Valid is set, disable any previously programmed VPE
+     * by setting PendingLast while clearing Valid. This has the effect of
+     * making sure no doorbell will be generated and we can then safely
+     * clear VPROPBASER.Valid.
+     */
+    if ( gits_read_vpendbaser(vlpi_base + GICR_VPENDBASER) &
+                              GICR_VPENDBASER_Valid )
+        gits_write_vpendbaser(GICR_VPENDBASER_PendingLast,
+                              vlpi_base + GICR_VPENDBASER);
+
+    /* Check if we can inherit the configuration from another Redistributor. */
+    val = inherit_vpe_l1_table_from_rd();
+    if ( val & GICR_VPROPBASER_4_1_VALID )
+        goto out;
+
+    VPE_TABLE_MASK = xzalloc(cpumask_t);
+    if ( !VPE_TABLE_MASK )
+        return -ENOMEM;
+
+    /* Check if we can inherit the configuration from ITS Baser2. */
+    val = inherit_vpe_l1_table_from_its();
+    if ( val & GICR_VPROPBASER_4_1_VALID )
+        goto out;
+
+    /* First probe the page size and entry size */
+    val = FIELD_PREP(GICR_VPROPBASER_4_1_PAGE_SIZE, GIC_PAGE_SIZE_64K);
+    gits_write_vpropbaser(val, vlpi_base + GICR_VPROPBASER);
+    val = gits_read_vpropbaser(vlpi_base + GICR_VPROPBASER);
+    gpsz = FIELD_GET(GICR_VPROPBASER_4_1_PAGE_SIZE, val);
+    esz = FIELD_GET(GICR_VPROPBASER_4_1_ENTRY_SIZE, val) + 1;
+
+    switch ( gpsz )
+    {
+    default:
+        gpsz = GIC_PAGE_SIZE_4K;
+    case GIC_PAGE_SIZE_4K:
+        psz = SZ_4K;
+        break;
+    case GIC_PAGE_SIZE_16K:
+        psz = SZ_16K;
+        break;
+    case GIC_PAGE_SIZE_64K:
+        psz = SZ_64K;
+        break;
+    }
+
+    /* Start populating the register from scratch. */
+    val = 0;
+    val |= FIELD_PREP(GICR_VPROPBASER_4_1_PAGE_SIZE, gpsz);
+    val |= FIELD_PREP(GICR_VPROPBASER_4_1_ENTRY_SIZE, esz - 1);
+
+    /* How many entries per GIC page? */
+    epp = psz / (esz * SZ_8);
+
+    /*
+     * If we need more than just a single L1 page, flag the table
+     * as indirect and compute the number of required L1 pages.
+     */
+    if ( epp < MAX_VPEID )
+    {
+        int nl2;
+
+        val |= GICR_VPROPBASER_4_1_INDIRECT;
+
+        /* Number of L2 pages required to cover the VPEID range */
+        nl2 = DIV_ROUND_UP(MAX_VPEID, epp);
+
+        /* Number of L1 pages to point to the L2 pages */
+        npg = DIV_ROUND_UP(nl2 * SZ_8, psz);
+    }
+    else
+        npg = 1;
+
+    val |= FIELD_PREP(GICR_VPROPBASER_4_1_SIZE, npg - 1);
+
+    buffer = _xzalloc(npg * psz, psz);
+    if ( !buffer )
+        return -ENOMEM;
+    pa = virt_to_maddr(buffer);
+
+    val |= FIELD_PREP(GICR_VPROPBASER_4_1_ADDR, pa >> 12);
+    val |= gicv3_its_get_cacheability() << GICR_VPROPBASER_INNER_CACHEABILITY_SHIFT;
+    val |= gicv3_its_get_shareability() << GICR_VPROPBASER_SHAREABILITY_SHIFT;
+    val |= GICR_VPROPBASER_4_1_Z;
+    val |= GICR_VPROPBASER_4_1_VALID;
+
+ out:
+    gits_write_vpropbaser(val, vlpi_base + GICR_VPROPBASER);
+    cpumask_set_cpu(smp_processor_id(), VPE_TABLE_MASK);
+
+    return 0;
+}
+
+/*
+ * Local variables:
+ * mode: C
+ * c-file-style: "BSD"
+ * c-basic-offset: 4
+ * indent-tabs-mode: nil
+ * End:
+ */
