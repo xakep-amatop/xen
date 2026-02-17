@@ -64,6 +64,12 @@ static const struct its_quirk its_quirks[] = {
         .init	= gicv3_its_enable_quirk_gen4,
     },
     {
+        .desc	= "R-Car Gen5",
+        .iidr	= 0x0701043b,
+        .mask	= 0xffffffff,
+        .init	= gicv3_its_enable_quirk_gen4,
+    },
+    {
         /* Sentinel. */
     }
 };
