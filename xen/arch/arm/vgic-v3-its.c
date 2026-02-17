@@ -293,6 +293,7 @@ static int its_handle_int(struct virt_its *its, uint64_t *cmdptr)
     struct vcpu *vcpu;
     uint32_t vlpi;
     bool ret;
+    struct pending_irq *p;
 
     spin_lock(&its->its_lock);
     ret = read_itte(its, devid, eventid, &vcpu, &vlpi);
@@ -302,6 +303,14 @@ static int its_handle_int(struct virt_its *its, uint64_t *cmdptr)
 
     if ( vlpi == INVALID_LPI )
         return -1;
+
+    p = gicv3_its_get_event_pending_irq(its->d, its->doorbell_address,
+                                        devid, eventid);
+    if ( unlikely(!p) )
+        return -1;
+
+    if ( pirq_is_tied_to_hw(p) )
+        return its_set_vlpi_state(p, true);
 
     vgic_vcpu_inject_lpi(its->d, vlpi);
 
@@ -354,6 +363,12 @@ static int its_handle_clear(struct virt_its *its, uint64_t *cmdptr)
     /* Protect against an invalid LPI number. */
     if ( unlikely(!p) )
         goto out_unlock;
+
+    if ( pirq_is_tied_to_hw(p) )
+    {
+        ret = its_set_vlpi_state(p, false);
+        goto out_unlock;
+    }
 
     /*
      * TODO: This relies on the VCPU being correct in the ITS tables.
@@ -795,7 +810,6 @@ static int its_handle_mapti(struct virt_its *its, uint64_t *cmdptr)
     if ( ret )
         goto out_remove_host_entry;
 
-    pirq->lpi_vcpu_id = vcpu->vcpu_id;
     /*
      * Now insert the pending_irq into the domain's LPI tree, so that
      * it becomes live.
