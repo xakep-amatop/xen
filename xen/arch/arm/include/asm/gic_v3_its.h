@@ -231,6 +231,7 @@ int its_send_cmd_discard(struct host_its *its, struct its_device *dev,
                          uint32_t eventid);
 int its_send_cmd_inv(struct host_its *its, uint32_t deviceid, uint32_t eventid);
 int its_send_cmd_clear(struct host_its *its, uint32_t deviceid, uint32_t eventid);
+int its_send_cmd_int(struct host_its *its, uint32_t deviceid, uint32_t eventid);
 int gicv3_its_wait_commands(struct host_its *hw_its);
 int its_inv_lpi(struct host_its *its, struct its_device *dev,
                 uint32_t eventid, unsigned int cpu);
@@ -238,6 +239,8 @@ int its_send_cmd_mapti(struct host_its *its, uint32_t deviceid,
                        uint32_t eventid, uint32_t pintid, uint16_t icid);
 struct its_device *its_create_device(struct host_its *hw_its,
                                      uint32_t host_devid, uint64_t nr_events);
+int update_lpi_property(struct domain *d, struct pending_irq *p,
+                        bool needs_inv);
 int its_send_cmd_movi(struct host_its *its, uint32_t deviceid, uint32_t eventid,
                       uint16_t icid);
 int its_send_cmd_sync(struct host_its *its, unsigned int cpu);
@@ -331,6 +334,7 @@ void its_vpe_mask_db(struct its_vpe *vpe);
 int gicv4_its_vlpi_unmap(struct pending_irq *pirq);
 int its_vlpi_prop_update(struct pending_irq *pirq, uint8_t property,
                          bool needs_inv);
+int its_set_vlpi_state(struct pending_irq *pirq, bool state);
 void direct_lpi_inv(struct its_device *dev, uint32_t eventid,
                     uint32_t db_lpi, unsigned int cpu);
 

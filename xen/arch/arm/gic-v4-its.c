@@ -1134,3 +1134,22 @@ int its_vlpi_prop_update(struct pending_irq *pirq, uint8_t property,
 
     return its_vlpi_set_doorbell(map, property & LPI_PROP_ENABLED);
 }
+
+int its_set_vlpi_state(struct pending_irq *pirq, bool state)
+{
+    struct its_vlpi_map *map;
+    int ret;
+
+    map = pirq->vlpi_map;
+    if ( !map )
+        return -EINVAL;
+
+    if ( state )
+        ret = its_send_cmd_int(map->dev->hw_its, map->dev->host_devid,
+                               map->eventid);
+    else
+        ret = its_send_cmd_clear(map->dev->hw_its, map->dev->host_devid,
+                                 map->eventid);
+
+    return ret;
+}

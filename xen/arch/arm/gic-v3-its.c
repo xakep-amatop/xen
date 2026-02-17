@@ -337,6 +337,30 @@ int its_send_cmd_discard(struct host_its *its, struct its_device *dev,
     return its_send_command(its, cmd);
 }
 
+int its_send_cmd_clear(struct host_its *its, uint32_t deviceid, uint32_t eventid)
+{
+    uint64_t cmd[4];
+
+    cmd[0] = GITS_CMD_CLEAR | ((uint64_t)deviceid << 32);
+    cmd[1] = eventid;
+    cmd[2] = 0x00;
+    cmd[3] = 0x00;
+
+    return its_send_command(its, cmd);
+}
+
+int its_send_cmd_int(struct host_its *its, uint32_t deviceid, uint32_t eventid)
+{
+    uint64_t cmd[4];
+
+    cmd[0] = GITS_CMD_INT | ((uint64_t)deviceid << 32);
+    cmd[1] = eventid;
+    cmd[2] = 0x00;
+    cmd[3] = 0x00;
+
+    return its_send_command(its, cmd);
+}
+
 int its_send_cmd_movi(struct host_its *its, uint32_t deviceid, uint32_t eventid,
                       uint16_t icid)
 {
