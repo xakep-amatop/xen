@@ -665,8 +665,19 @@ int arch_domain_create(struct domain *d,
         break;
 
     case XEN_DOMCTL_CONFIG_GIC_V3:
-        d->arch.vgic.version = GIC_V3;
+    {
+        enum gic_version hw_version = gic_hw_version();
+
+        /*
+         * Keep the toolstack-facing config at GICv3, but use the
+         * actual hardware version internally when it is GICv4/4.1.
+         */
+        if ( hw_version == GIC_V4 || hw_version == GIC_V4_1 )
+            d->arch.vgic.version = hw_version;
+        else
+            d->arch.vgic.version = GIC_V3;
         break;
+    }
 
     default:
         BUG();
