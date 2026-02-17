@@ -20,9 +20,15 @@
 #ifndef __ASM_ARM_ITS_H__
 #define __ASM_ARM_ITS_H__
 
+#define GIC_PAGE_SIZE_4K                0UL
+#define GIC_PAGE_SIZE_16K               1UL
+#define GIC_PAGE_SIZE_64K               2UL
+#define GIC_PAGE_SIZE_MASK              3UL
+
 #define GITS_CTLR                       0x000
 #define GITS_IIDR                       0x004
 #define GITS_TYPER                      0x008
+#define GITS_MPIDR                      0x018
 #define GITS_CBASER                     0x080
 #define GITS_CWRITER                    0x088
 #define GITS_CREADR                     0x090
@@ -39,6 +45,14 @@
 
 /* Register bits */
 #define GITS_VALID_BIT                  BIT(63, UL)
+#ifdef CONFIG_GICV4
+#define GITS_ALLOC_BIT                  BIT(8, UL)
+#define GITS_PTZ_BIT                    BIT(9, UL)
+#define GITS_DB_BIT                     BIT(63, UL)
+#define GITS_ENABLE_BIT                 BIT(8, UL)
+#define GITS_CLEAR_BIT                  BIT(9, UL)
+#define GITS_GROUP_BIT                  BIT(10, UL)
+#endif
 
 #define GITS_CTLR_QUIESCENT             BIT(31, UL)
 #define GITS_CTLR_ENABLE                BIT(0, UL)
@@ -65,7 +79,10 @@
 
 #define GITS_TYPER_VLPIS                (1UL << 1)
 #define GITS_TYPER_VMOVP                (1UL << 37)
+#define GITS_TYPER_VMAPP                (1UL << 40)
+#define GITS_TYPER_SVPET                GENMASK(42, 41)
 #define GITS_BASER_INDIRECT             BIT(62, UL)
+#define GITS_BASER_VALID                BIT(63, UL)
 #define GITS_BASER_INNER_CACHEABILITY_SHIFT        59
 #define GITS_BASER_TYPE_SHIFT           56
 #define GITS_BASER_TYPE_MASK            (7ULL << GITS_BASER_TYPE_SHIFT)
@@ -85,10 +102,20 @@
 #define GITS_LVL1_ENTRY_SIZE            8UL
 #define GITS_BASER_SHAREABILITY_SHIFT   10
 #define GITS_BASER_PAGE_SIZE_SHIFT      8
+#define __GITS_BASER_PSZ(sz)            (GIC_PAGE_SIZE_ ## sz <<         \
+                                        GITS_BASER_PAGE_SIZE_SHIFT)
+#define GITS_BASER_PAGE_SIZE_4K         __GITS_BASER_PSZ(4K)
+#define GITS_BASER_PAGE_SIZE_16K        __GITS_BASER_PSZ(16K)
+#define GITS_BASER_PAGE_SIZE_64K        __GITS_BASER_PSZ(64K)
+#define GITS_BASER_PAGE_SIZE_MASK       __GITS_BASER_PSZ(MASK)
+#define GITS_BASER_NR_PAGES(r)          (((r) & 0xff) + 1)
+
 #define GITS_BASER_SIZE_MASK            0xff
 #define GITS_BASER_SHAREABILITY_MASK   (0x3ULL << GITS_BASER_SHAREABILITY_SHIFT)
 #define GITS_BASER_OUTER_CACHEABILITY_MASK   (0x7ULL << GITS_BASER_OUTER_CACHEABILITY_SHIFT)
 #define GITS_BASER_INNER_CACHEABILITY_MASK   (0x7ULL << GITS_BASER_INNER_CACHEABILITY_SHIFT)
+#define GITS_BASER_ADDR_48_to_52(baser)                 \
+    (((baser) & GENMASK(47, 16)) | (((baser) >> 12) & 0xf) << 48)
 
 #define GITS_CBASER_SIZE_MASK           0xff
 
@@ -184,6 +211,7 @@ struct host_its {
     paddr_t addr;
     paddr_t size;
     void __iomem *its_base;
+    void __iomem *sgir_base;
     unsigned int devid_bits;
     unsigned int evid_bits;
     unsigned int itte_size;
@@ -192,6 +220,8 @@ struct host_its {
     unsigned int flags;
     struct its_baser tables[GITS_BASER_NR_REGS];
     bool is_v4;
+    bool is_v4_1;
+    uint32_t mpidr;
 };
 
 /* Map a collection for this host CPU to each host ITS. */
@@ -318,6 +348,7 @@ int its_send_command(struct host_its *hw_its, const void *its_cmd);
 
 struct its_device *get_its_device(struct domain *d, paddr_t vdoorbell,
                                   uint32_t vdevid);
+
 /* GICv4 functions */
 int gicv4_assign_guest_event(struct domain *d, paddr_t vdoorbell_address,
                              uint32_t vdevid, uint32_t eventid,
