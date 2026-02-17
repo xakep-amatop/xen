@@ -1966,6 +1966,137 @@ int its_sgi_prop_update(struct vcpu *v, unsigned int irq, uint8_t priority)
     return 0;
 }
 
+static void vgic_v4_sync_sgi_config(struct its_vpe *vpe,
+                                    struct pending_irq *pirq)
+{
+    bool enabled;
+
+    enabled = test_bit(GIC_IRQ_GUEST_ENABLED, &pirq->status);
+    vpe->sgi_config[pirq->irq].enabled = enabled;
+    /* Always Group-1 interrupt */
+    vpe->sgi_config[pirq->irq].group = true;
+    vpe->sgi_config[pirq->irq].priority = pirq->priority;
+}
+
+/* Transfer from old, software-emulated SGIs to the new, HW-based ones */
+static void vgic_v4_enable_vsgis(struct vcpu *vcpu)
+{
+    struct its_vpe *vpe = vcpu->arch.vgic.its_vpe;
+    unsigned int i;
+    struct host_its *hw_its = find_4_1_its();
+    unsigned long flags;
+
+    for ( i = 0; i < VGIC_NR_SGIS; i++ )
+    {
+        struct pending_irq *p = irq_to_pending(vcpu, i);
+
+        spin_lock_irqsave(&vcpu->arch.vgic.lock, flags);
+
+        if ( p->hw )
+            goto unlock;
+
+        /*
+         * With GICv4.1, every virtual SGI can be directly injected. So
+         * let's pretend that they are HW-based interrupts.
+         */
+        p->hw = true;
+
+        /* Transfer the full pending_irq state to the vPE */
+        vgic_v4_sync_sgi_config(vpe, p);
+        WARN_ON(its_send_cmd_vsgi(hw_its, i, vpe, false));
+
+        /* Transfer pending state */
+        if ( test_bit(GIC_IRQ_GUEST_ENABLED, &p->status) &&
+             !list_empty(&p->inflight) )
+        {
+            /*
+             * If IRQ is lr_pending, we could transfer to use ITS MMIO
+             * registers to deliver pending state
+             */
+            if ( !list_empty(&p->lr_queue) )
+            {
+                list_del_init(&p->lr_queue);
+                WARN_ON(its_sgi_set_pending_state(vcpu, i, true));
+                clear_bit(GIC_IRQ_GUEST_QUEUED, &p->status);
+                list_del_init(&p->inflight);
+            }
+            else
+                gic_raise_inflight_irq(vcpu, i);
+        }
+
+    unlock:
+        spin_unlock_irqrestore(&vcpu->arch.vgic.lock, flags);
+    }
+}
+
+/* Transfer from new, HW-based SGIS to the old, software-emulated ones */
+static void vgic_v4_disable_vsgis(struct vcpu *vcpu)
+{
+    struct its_vpe *vpe = vcpu->arch.vgic.its_vpe;
+    unsigned int i;
+    struct host_its *hw_its = find_4_1_its();
+    uint32_t ipending;
+    unsigned long flags;
+    int ret;
+
+    ret = its_sgi_get_pending_state(vcpu, &ipending);
+    WARN_ON(ret);
+
+    for ( i = 0; i < VGIC_NR_SGIS; i++ )
+    {
+        struct pending_irq *p = irq_to_pending(vcpu, i);
+
+        spin_lock_irqsave(&vcpu->arch.vgic.lock, flags);
+
+        if ( !p->hw )
+            goto unlock;
+
+        p->hw = false;
+
+        /* Transfer pending state */
+        if ( ipending & (1U << i) )
+             vgic_inject_irq(vcpu->domain, vcpu, i, true);
+
+        /*
+         * Disable HW-based VSGI and clearing the pending bit.
+         * For VSGI command:
+         * To change the configuration, CLEAR must be set to false,
+         * leaving the pending bit unchanged.
+         * To clear the pending bit, CLEAR must be set to true, leaving
+         * the configuration unchanged.
+         * You just can't do both at once, hence the two commands below.
+         */
+        vpe->sgi_config[i].enabled = false;
+        WARN_ON(its_send_cmd_vsgi(hw_its, i, vpe, false));
+        WARN_ON(its_send_cmd_vsgi(hw_its, i, vpe, true));
+
+    unlock:
+        spin_unlock_irqrestore(&vcpu->arch.vgic.lock, flags);
+    }
+}
+
+void vgic_v4_configure_vsgis(struct domain *d)
+{
+    struct vcpu *v;
+
+    WARN_ON(domain_pause_except_self(d));
+
+    for_each_vcpu ( d, v )
+    {
+        if ( d->arch.vgic.nassgireq )
+            vgic_v4_enable_vsgis(v);
+        else
+            vgic_v4_disable_vsgis(v);
+    }
+
+    domain_unpause_except_self(d);
+}
+
+bool guest_support_nassgi(struct domain *d)
+{
+    return d->arch.vgic.nassgireq;
+}
+
 /*
  * Local variables:
  * mode: C
