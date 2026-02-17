@@ -161,11 +161,9 @@ int its_send_command(struct host_its *hw_its, const void *its_cmd)
     s_time_t deadline = NOW() + MILLISECS(1);
     uint64_t readp, writep;
     int ret = -EBUSY;
+    unsigned long flags;
 
-    /* No ITS commands from an interrupt handler (at the moment). */
-    ASSERT(!in_irq());
-
-    spin_lock(&hw_its->cmd_lock);
+    spin_lock_irqsave(&hw_its->cmd_lock, flags);
 
     do {
         readp = readq_relaxed(hw_its->its_base + GITS_CREADR) & BUFPTR_MASK;
@@ -181,15 +179,15 @@ int its_send_command(struct host_its *hw_its, const void *its_cmd)
          * If the command queue is full, wait for a bit in the hope it drains
          * before giving up.
          */
-        spin_unlock(&hw_its->cmd_lock);
+        spin_unlock_irqrestore(&hw_its->cmd_lock, flags);
         cpu_relax();
         udelay(1);
-        spin_lock(&hw_its->cmd_lock);
+        spin_lock_irqsave(&hw_its->cmd_lock, flags);
     } while ( NOW() <= deadline );
 
     if ( ret )
     {
-        spin_unlock(&hw_its->cmd_lock);
+        spin_unlock_irqrestore(&hw_its->cmd_lock, flags);
         if ( printk_ratelimit() )
             printk(XENLOG_WARNING "host ITS: command queue full.\n");
         return ret;
@@ -205,7 +203,7 @@ int its_send_command(struct host_its *hw_its, const void *its_cmd)
     writep = (writep + ITS_CMD_SIZE) % ITS_CMD_QUEUE_SZ;
     writeq_relaxed(writep & BUFPTR_MASK, hw_its->its_base + GITS_CWRITER);
 
-    spin_unlock(&hw_its->cmd_lock);
+    spin_unlock_irqrestore(&hw_its->cmd_lock, flags);
 
     return 0;
 }
@@ -466,6 +464,47 @@ struct its_baser *its_get_baser(struct host_its *hw_its, uint32_t type)
     return NULL;
 }
 
+static bool its_parse_indirect_baser(void __iomem *basereg,
+                                     unsigned int pagesz,
+                                     unsigned int *entry_size,
+                                     unsigned int *nr_items)
+{
+    bool indirect = false;
+    unsigned int idx = ilog2(*nr_items);
+    unsigned int table_size;
+
+    table_size = ROUNDUP(*nr_items * *entry_size,
+                         BIT(BASER_PAGE_BITS(pagesz), UL));
+
+    /* No need to enable Indirection if memory requirement <= (pagesz*2) bytes */
+    if ( table_size > (2 * BIT(BASER_PAGE_BITS(pagesz), UL)) )
+    {
+        /*
+         * Find out whether hw supports a single or two-level table by
+         * reading bit at offset '62' after writing '1' to it.
+         * This field is RAZ/WI for GIC implementations that only support
+         * flat tables.
+         */
+        writeq_relaxed(GITS_BASER_INDIRECT, basereg);
+        indirect = (readq_relaxed(basereg)) & GITS_BASER_INDIRECT;
+
+        if ( indirect )
+        {
+            /*
+             * For computing lvl1 table size, subtract ID bits that
+             * represents sparse lvl2 table from 'ids', which is
+             * reported by ITS hardware, times lvl1 table entry size.
+             */
+            idx -= ilog2(BIT(BASER_PAGE_BITS(pagesz), UL) / *entry_size);
+            *entry_size = GITS_LVL1_ENTRY_SIZE;
+        }
+
+        *nr_items = BIT(idx, UL);
+    }
+
+    return indirect;
+}
+
 bool its_alloc_table_entry(struct its_baser *baser, uint32_t id)
 {
     uint64_t reg = baser->val;
@@ -524,6 +563,7 @@ static int its_map_baser(void __iomem *basereg, uint64_t regc,
     unsigned int table_size;
     unsigned int order;
     void *buffer;
+    bool indirect;
     uint32_t type;
 
     type = GITS_BASER_TYPE(regc);
@@ -537,6 +577,8 @@ static int its_map_baser(void __iomem *basereg, uint64_t regc,
      * attributes), retrying if necessary.
      */
 retry:
+    indirect = its_parse_indirect_baser(basereg, pagesz, &entry_size, &nr_items);
+
     table_size = ROUNDUP(nr_items * entry_size,
                          BIT(BASER_PAGE_BITS(pagesz), UL));
     /* The BASE registers support at most 256 pages. */
@@ -562,6 +604,7 @@ retry:
     reg |= GITS_VALID_BIT;
     reg |= encode_baser_phys_addr(virt_to_maddr(buffer),
                                   BASER_PAGE_BITS(pagesz));
+    reg |= indirect ? GITS_BASER_INDIRECT : 0x0;
 
     writeq_relaxed(reg, basereg);
     regc = readq_relaxed(basereg);
