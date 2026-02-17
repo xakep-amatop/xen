@@ -1272,8 +1272,18 @@ static int vgic_v3_distr_mmio_read(struct vcpu *v, mmio_info_t *info,
         *r = vreg_reg32_extract(GICV3_GICD_IIDR_VAL, info);
         return 1;
 
-    case VREG32(0x000C):
-        goto read_reserved;
+    case VREG32(GICD_TYPER2):
+    {
+        uint32_t typer2 = 0;
+
+        if ( dabt.size != DABT_WORD ) goto bad_width;
+        if ( vgic_has_directVSGI(v->domain) )
+            typer2 = GICD_TYPER2_nASSGIcap;
+
+        *r = vreg_reg32_extract(typer2, info);
+
+        return 1;
+    }
 
     case VREG32(GICD_STATUSR):
         /*
@@ -1477,8 +1487,9 @@ static int vgic_v3_distr_mmio_write(struct vcpu *v, mmio_info_t *info,
         /* RO -- write ignored */
         goto write_ignore_32;
 
-    case VREG32(0x000C):
-        goto write_reserved;
+    case VREG32(GICD_TYPER2):
+        /* write ignored */
+        goto write_ignore_32;
 
     case VREG32(GICD_STATUSR):
         /* RO -- write ignored */
