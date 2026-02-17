@@ -657,7 +657,7 @@ void vgic_v4_free_its_vm(struct domain *d)
     if ( its_vm->db_lpi_bases )
         xfree(its_vm->db_lpi_bases);
     if ( its_vm->vproptable )
-        lpi_free_proptable(its_vm);
+        lpi_free_proptable(its_vm->vproptable);
 }
 
 int vgic_v4_its_vpe_init(struct vcpu *vcpu)
@@ -671,7 +671,6 @@ int vgic_v4_its_vpe_init(struct vcpu *vcpu)
         return -ENOMEM;
 
     its_vm->vpes[vcpuid] = vcpu->arch.vgic.its_vpe;
-    vcpu->arch.vgic.its_vpe = vcpu->arch.vgic.its_vpe;
     vcpu->arch.vgic.its_vpe->vpe_db_lpi = its_vm->db_lpi_bases[vcpuid/32] + (vcpuid % 32);
     /*
      * Sometimes vlpi gets firstly mapped before associated vpe
@@ -841,6 +840,7 @@ static int gicv4_its_vlpi_map(struct its_vlpi_map *map)
     spin_unlock(&dev->event_map.vlpi_lock);
     return ret;
 }
+
 int gicv4_its_vlpi_unmap(struct pending_irq *pirq)
 {
     struct its_vlpi_map *map = pirq->vlpi_map;
