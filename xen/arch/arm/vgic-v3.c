@@ -1462,6 +1462,7 @@ static int vgic_v3_distr_mmio_write(struct vcpu *v, mmio_info_t *info,
     case VREG32(GICD_CTLR):
     {
         uint32_t ctlr = 0;
+        bool was_enabled, is_enabled, was_hwsgi, is_hwsgi;
 
         if ( dabt.size != DABT_WORD ) goto bad_width;
 
@@ -1469,7 +1470,31 @@ static int vgic_v3_distr_mmio_write(struct vcpu *v, mmio_info_t *info,
 
         vreg_reg32_update(&ctlr, r, info);
 
-        /* Only EnableGrp1A can be changed */
+        was_enabled = v->domain->arch.vgic.ctlr & GICD_CTLR_ENABLE_G1A;
+        is_enabled = ctlr & GICD_CTLR_ENABLE_G1A;
+
+        /* Not a GICv4.1? No HW SGIs */
+        if ( !vgic_has_directVSGI(v->domain) )
+            ctlr &= ~GICD_CTLR_nASSGIreq;
+
+        was_hwsgi = v->domain->arch.vgic.nassgireq;
+        /* Dist stays enabled? nASSGIreq is RO */
+        if ( was_enabled && is_enabled )
+        {
+            ctlr &= ~GICD_CTLR_nASSGIreq;
+            ctlr |= FIELD_PREP(GICD_CTLR_nASSGIreq, was_hwsgi);
+        }
+
+        is_hwsgi = ctlr & GICD_CTLR_nASSGIreq;
+        if ( is_hwsgi )
+            v->domain->arch.vgic.ctlr |= GICD_CTLR_nASSGIreq;
+        else
+            v->domain->arch.vgic.ctlr &= ~GICD_CTLR_nASSGIreq;
+        v->domain->arch.vgic.nassgireq = is_hwsgi;
+        /* Switching SGI type */
+        if ( was_hwsgi != is_hwsgi )
+            vgic_v4_configure_vsgis(v->domain);
+
         if ( ctlr & GICD_CTLR_ENABLE_G1A )
             v->domain->arch.vgic.ctlr |= GICD_CTLR_ENABLE_G1A;
         else
