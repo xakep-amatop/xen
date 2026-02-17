@@ -19,6 +19,9 @@
 #include <asm/gic.h>
 #include <asm/gic_v3_defs.h>
 #include <asm/gic_v3_its.h>
+#ifdef CONFIG_GICV4
+#include <asm/gic_v4_its.h>
+#endif
 #include <asm/io.h>
 #include <asm/page.h>
 
@@ -736,6 +739,71 @@ static int __init its_compute_its_list_map(struct host_its *hw_its)
     return its_number;
 }
 
+uint32_t compute_common_aff(uint64_t val)
+{
+    uint32_t aff, clpiaff;
+
+    aff = FIELD_GET(GICR_TYPER_AFFINITY, val);
+    clpiaff = FIELD_GET(GICR_TYPER_COMMON_LPI_AFF, val);
+
+    return aff & ~(GENMASK(31, 0) >> (clpiaff * 8));
+}
+
+uint32_t compute_its_aff(struct host_its *hw_its)
+{
+    uint64_t val, typer;
+    uint32_t svpet;
+
+    typer = readq_relaxed(hw_its->its_base + GITS_TYPER);
+
+    /*
+     * Reencode the ITS SVPET and MPIDR as a GICR_TYPER, and compute
+     * the resulting affinity. We then use that to see if this match
+     * our own affinity.
+     */
+    svpet = FIELD_GET(GITS_TYPER_SVPET, typer);
+    val  = FIELD_PREP(GICR_TYPER_COMMON_LPI_AFF, svpet);
+    val |= FIELD_PREP(GICR_TYPER_AFFINITY, hw_its->mpidr);
+    return compute_common_aff(val);
+}
+
+static struct host_its *find_sibling_its(struct host_its *cur_its)
+{
+    uint64_t cur_typer;
+    struct host_its *its;
+    uint32_t aff;
+
+    cur_typer = readq_relaxed(cur_its->its_base + GITS_TYPER);
+    if ( !FIELD_GET(GITS_TYPER_SVPET, cur_typer) )
+        return NULL;
+
+    aff = compute_its_aff(cur_its);
+
+    list_for_each_entry(its, &host_its_list, entry)
+    {
+        uint64_t typer, baser;
+
+        if ( !its->is_v4_1 || its == cur_its )
+            continue;
+
+        typer = readq_relaxed(its->its_base + GITS_TYPER);
+        if ( !FIELD_GET(GITS_TYPER_SVPET, typer) )
+            continue;
+
+        if ( aff != compute_its_aff(its) )
+            continue;
+
+        /* GICv4.1 guarantees that the vPE table is GITS_BASER2 */
+        baser = its->tables[2].val;
+        if ( !(baser & GITS_BASER_VALID) )
+            continue;
+
+        return its;
+    }
+
+    return NULL;
+}
+
 static int gicv3_its_init_single_its(struct host_its *hw_its)
 {
     uint64_t reg;
@@ -774,6 +842,21 @@ static int gicv3_its_init_single_its(struct host_its *hw_its)
             dprintk(XENLOG_INFO,
                     "ITS@%lx: Single VMOVP capable\n", hw_its->addr);
     }
+    hw_its->is_v4_1 = reg & GITS_TYPER_VMAPP;
+    if ( hw_its->is_v4_1 )
+    {
+        uint32_t svpet = FIELD_GET(GITS_TYPER_SVPET, reg);
+
+        hw_its->sgir_base = ioremap_nocache(hw_its->addr + SZ_128K, SZ_64K);
+        if ( !hw_its->sgir_base )
+            return -ENOMEM;
+
+        hw_its->mpidr = readl_relaxed(hw_its->its_base + GITS_MPIDR);
+
+        printk(XENLOG_INFO "ITS@%"PRIpaddr": Using GICv4.1 mode %08x %08x\n",
+               hw_its->addr, hw_its->mpidr, svpet);
+    }
+
     spin_lock_init(&hw_its->cmd_lock);
 
     for ( i = 0; i < GITS_BASER_NR_REGS; i++ )
@@ -798,8 +881,25 @@ static int gicv3_its_init_single_its(struct host_its *hw_its)
             if ( ret )
                 return ret;
             break;
-        /* In case this is a GICv4, provide a (dummy) vPE table as well. */
         case GITS_BASER_TYPE_VCPU:
+            /*
+             * vPE configuration table could be shared among ITSes in the
+             * same aff group.
+             */
+            if ( hw_its->is_v4_1 )
+            {
+                struct host_its *sib_its;
+
+                sib_its = find_sibling_its(hw_its);
+                if ( sib_its )
+                {
+                    *baser = sib_its->tables[2];
+                    writeq_relaxed(baser->val, basereg);
+                    baser->val = readq_relaxed(basereg);
+                    continue;
+                }
+            }
+
             ret = its_map_baser(basereg, reg, 32, baser);
             if ( ret )
                 return ret;

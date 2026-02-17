@@ -366,6 +366,9 @@ int gicv4_its_vlpi_unmap(struct pending_irq *pirq);
 int its_vlpi_prop_update(struct pending_irq *pirq, uint8_t property,
                          bool needs_inv);
 int its_set_vlpi_state(struct pending_irq *pirq, bool state);
+/* GICv4.1 functions */
+uint32_t compute_common_aff(uint64_t val);
+uint32_t compute_its_aff(struct host_its *hw_its);
 void direct_lpi_inv(struct its_device *dev, uint32_t eventid,
                     uint32_t db_lpi, unsigned int cpu);
 
