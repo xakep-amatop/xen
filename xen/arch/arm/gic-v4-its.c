@@ -64,6 +64,8 @@ void __init gicv4_its_vpeid_allocator_init(void)
         panic("Could not allocate VPEID bitmap space\n");
 }
 
+static void encode_vmovp_v4_1(uint64_t *cmd, uint32_t default_db_pintid);
+
 static void __iomem *gic_data_rdist_vlpi_base(unsigned int cpu)
 {
     /*
@@ -242,7 +244,8 @@ static int its_send_cmd_vmapp(struct host_its *its, struct its_vpe *vpe,
 {
     uint64_t cmd[4];
     uint16_t vpeid = vpe->vpe_id;
-    uint64_t vpt_addr;
+    uint64_t vpt_addr, vprop_addr;
+    bool alloc = 0, ptz;
     int ret;
 
     cmd[0] = GITS_CMD_VMAPP;
@@ -251,13 +254,36 @@ static int its_send_cmd_vmapp(struct host_its *its, struct its_vpe *vpe,
 
     /* Unmap command */
     if ( !valid )
+    {
+        if ( its->is_v4_1 )
+            alloc = !atomic_dec_return(&vpe->vmapp_count);
+
         goto out;
+    }
 
     /* Target redistributor */
     cmd[2] |= encode_rdbase(its, vpe->col_idx, 0x0);
     vpt_addr = virt_to_maddr(vpe->vpendtable);
     cmd[3] = (vpt_addr & GENMASK(51, 16)) |
              ((HOST_LPIS_NRBITS - 1) & GENMASK(4, 0));
+
+    if ( !its->is_v4_1 )
+        goto out;
+
+    alloc = atomic_inc_return(&vpe->vmapp_count) == 1 ? true : false;
+    cmd[0] |= alloc ? GITS_ALLOC_BIT : 0;
+    /* Virtual property table */
+    vprop_addr = virt_to_maddr(vpe->its_vm->vproptable);
+    cmd[0] |= vprop_addr & GENMASK(51, 16);
+
+    /*
+     * GICv4.1 provides a way to get the VLPI state, which needs the vPE
+     * to be unmapped first, and in this case, we may remap the vPE
+     * back while the VPT is not empty. So we can't assume that the
+     * VPT is empty on map. This is why we never advertise PTZ.
+     */
+    ptz = false;
+    cmd[0] |= ptz ? GITS_PTZ_BIT : 0;
 
     /* Default doorbell interrupt */
     cmd[1] |= (uint64_t)vpe->vpe_db_lpi;
@@ -444,7 +470,11 @@ static int __init its_vpe_init(struct its_vpe *vpe)
     rwlock_init(&vpe->lock);
     vpe->vpe_id = vpe_id;
     vpe->vpendtable = page_to_virt(vpendtable);
+    if ( gic_has_v4_1_extension() )
+        atomic_set(&vpe->vmapp_count, 0);
+    else
         vpe->vpe_proxy_event = -1;
+
     /*
      * We eagerly inform all the v4 ITS and map vPE to the first
      * possible CPU
@@ -485,6 +515,9 @@ static int its_send_cmd_vmovp(struct its_vpe *vpe)
         cmd[2] = encode_rdbase(hw_its, vpe->col_idx, 0x0);
         cmd[3] = 0x00;
 
+        if ( hw_its->is_v4_1 )
+            encode_vmovp_v4_1(cmd, vpe->vpe_db_lpi);
+
         return its_send_command(hw_its, cmd);
     }
 
@@ -502,10 +535,16 @@ static int its_send_cmd_vmovp(struct its_vpe *vpe)
     {
         uint64_t cmd[4];
 
+        if ( !hw_its->is_v4 )
+            continue;
+
         cmd[0] = GITS_CMD_VMOVP | ((uint64_t)vmovp_seq_num << 32);
         cmd[1] = its_list_map | ((uint64_t)vpeid << 32);
         cmd[2] = encode_rdbase(hw_its, vpe->col_idx, 0x0);
         cmd[3] = 0x00;
+
+        if ( hw_its->is_v4_1 )
+            encode_vmovp_v4_1(cmd, vpe->vpe_db_lpi);
 
         ret = its_send_command(hw_its, cmd);
         if ( ret )
@@ -1247,6 +1286,13 @@ int its_set_vlpi_state(struct pending_irq *pirq, bool state)
                                  map->eventid);
 
     return ret;
+}
+
+static void encode_vmovp_v4_1(uint64_t *cmd, uint32_t default_db_pintid)
+{
+    /* Always requiring a Default Doorbell on GICv4.1 */
+    cmd[2] |= GITS_DB_BIT;
+    cmd[3] |= default_db_pintid;
 }
 
 static uint64_t inherit_vpe_l1_table_from_rd(void)
