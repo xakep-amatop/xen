@@ -1507,9 +1507,9 @@ static int vgic_v3_its_init_virtual(struct domain *d, paddr_t guest_addr,
     if ( !its )
         return -ENOMEM;
 
-    base_attr  = GIC_BASER_InnerShareable << GITS_BASER_SHAREABILITY_SHIFT;
+    base_attr  = gicv3_its_get_shareability() << GITS_BASER_SHAREABILITY_SHIFT;
     base_attr |= GIC_BASER_CACHE_SameAsInner << GITS_BASER_OUTER_CACHEABILITY_SHIFT;
-    base_attr |= GIC_BASER_CACHE_RaWaWb << GITS_BASER_INNER_CACHEABILITY_SHIFT;
+    base_attr |= gicv3_its_get_cacheability() << GITS_BASER_INNER_CACHEABILITY_SHIFT;
 
     its->cbaser  = base_attr;
     base_attr |= 0ULL << GITS_BASER_PAGE_SIZE_SHIFT;    /* 4K pages */
