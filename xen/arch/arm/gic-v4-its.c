@@ -64,6 +64,15 @@ void __init gicv4_its_vpeid_allocator_init(void)
         panic("Could not allocate VPEID bitmap space\n");
 }
 
+static void its_make_vpe_4_1_resident(struct its_vpe *vpe, unsigned int cpu);
+static void its_make_vpe_4_1_non_resident(struct its_vpe *vpe, unsigned int cpu,
+                                          bool req_db);
+static int vpe_to_cpuid_lock(struct its_vpe *vpe, unsigned long *flags);
+static int its_send_cmd_vmovp(struct its_vpe *vpe);
+static void gicv4_vpe_send_clear(struct its_vpe *vpe);
+static uint64_t its_clear_vpend_valid(void __iomem *vlpi_base, uint64_t clr,
+                                      uint64_t set);
+static void vpe_to_cpuid_unlock(struct its_vpe *vpe, unsigned long *flags);
 static void encode_vmovp_v4_1(uint64_t *cmd, uint32_t default_db_pintid);
 
 static void __iomem *gic_data_rdist_vlpi_base(unsigned int cpu)
@@ -329,9 +338,14 @@ static int its_map_vpe(struct host_its *its, struct its_vpe *vpe)
 
     return 0;
 }
+
 static int gicv4_vpe_db_proxy_unmap_locked(struct its_vpe *vpe)
 {
     int ret;
+
+    /* GICv4.1 doesn't use a proxy, so nothing to do here */
+    if ( gic_has_v4_1_extension() )
+        return 0;
 
     /* Already unmapped? */
     if ( vpe->vpe_proxy_event == -1 )
@@ -357,6 +371,10 @@ static int gicv4_vpe_db_proxy_unmap_locked(struct its_vpe *vpe)
 
 static void gicv4_vpe_db_proxy_unmap(struct its_vpe *vpe)
 {
+    /* GICv4.1 doesn't use a proxy, so nothing to do here */
+    if ( gic_has_v4_1_extension() )
+        return;
+
     if ( !gic_support_directLPI() )
     {
         unsigned long flags;
@@ -383,6 +401,10 @@ static void gicv4_vpe_db_proxy_unmap(struct its_vpe *vpe)
 static int gicv4_vpe_db_proxy_map_locked(struct its_vpe *vpe)
 {
     int ret;
+
+    /* GICv4.1 doesn't use a proxy, so nothing to do here */
+    if ( gic_has_v4_1_extension() )
+        return 0;
 
     /* Already mapped? */
     if ( vpe->vpe_proxy_event != -1 )
@@ -413,6 +435,10 @@ int __init gicv4_init_vpe_proxy(void)
 {
     struct host_its *hw_its;
     uint32_t devid;
+
+    /* GICv4.1 doesn't use a proxy, so nothing to do here */
+    if ( gic_has_v4_1_extension() )
+        return 0;
 
     if ( gic_support_directLPI() )
     {
@@ -566,17 +592,68 @@ static void wait_for_syncr(void __iomem *rdbase)
         cpu_relax();
 }
 
+static struct host_its *find_4_1_its(void)
+{
+    /* Preserve the search result for multiple call */
+    static struct host_its *its = NULL;
+    static bool once = true;
+
+    /* The search will be only done once */
+    if ( !its && once )
+    {
+        list_for_each_entry(its, &host_its_list, entry)
+        {
+            if ( its->is_v4_1 )
+                return its;
+        }
+
+        /* No found */
+        its = NULL;
+        once = false;
+    }
+
+    return its;
+}
+
+/*
+ * LPI/VLPI invalidation through MMIO registers(GICR_INVLPIR,
+ * GICR_INVALLR, and GICR_SYNCR)
+ */
 void direct_lpi_inv(struct its_device *dev, uint32_t eventid,
                     uint32_t db_lpi, unsigned int cpu)
 {
     void __iomem *rdbase;
     uint64_t val;
-    /* Register-based LPI invalidation for DB on GICv4.0 */
-    val = FIELD_PREP(GICR_INVLPIR_INTID, db_lpi);
+    struct its_vpe *vpe = NULL;
+    unsigned long flags;
+
+    /* Register-based VLPI invalidation */
+    if ( dev )
+    {
+        struct its_vlpi_map *map = &dev->event_map.vlpi_maps[eventid];
+
+        /*
+         * The GICR_INVLPIR, GICR_INVALLR, and GICR_SYNCR registers
+         * are mandatory in GICv4.1
+         */
+        WARN_ON(!gic_has_v4_1_extension());
+
+        val  = GICR_INVLPIR_V;
+        vpe = map->vm->vpes[map->vpe_idx];
+        val |= FIELD_PREP(GICR_INVLPIR_VPEID, vpe->vpe_id);
+        val |= FIELD_PREP(GICR_INVLPIR_INTID, map->vintid);
+        vpe_to_cpuid_lock(vpe, &flags);
+    }
+    else
+        /* Register-based LPI invalidation for DB on GICv4.0 */
+        val = FIELD_PREP(GICR_INVLPIR_INTID, db_lpi);
 
     rdbase = per_cpu(rbase, cpu);
     writeq_relaxed(val, rdbase + GICR_INVLPIR);
     wait_for_syncr(rdbase);
+
+    if ( vpe )
+        vpe_to_cpuid_unlock(vpe, &flags);
 }
 
 static void its_vpe_send_inv_db(struct its_vpe *vpe)
@@ -600,9 +677,39 @@ static void its_vpe_send_inv_db(struct its_vpe *vpe)
     }
 }
 
+static int its_vpe_send_4_1_inv_db(struct host_its *its, struct its_vpe *vpe)
+{
+    uint64_t cmd[4];
+    uint16_t vpeid = vpe->vpe_id;
+    int ret;
+
+    cmd[0] = GITS_CMD_INVDB;
+    cmd[1] = (uint64_t)vpeid << 32;
+    cmd[2] = 0x00;
+    cmd[3] = 0x00;
+
+    ret = its_send_command(its, cmd);
+    if ( ret )
+        return ret;
+
+    /* INVDB is synchronized by a VSYNC command. */
+    return its_send_cmd_vsync(its, vpeid);
+}
+
 static void its_vpe_inv_db(struct its_vpe *vpe)
 {
-    its_vpe_send_inv_db(vpe);
+    struct host_its *its;
+
+    /*
+     * GICv4.1 wants doorbells to be invalidated using the
+     * INVDB command in order to be broadcast to all RDs. Send
+     * it to the first valid ITS, and let the HW do its magic.
+     */
+    its = find_4_1_its();
+    if ( its )
+        its_vpe_send_4_1_inv_db(its, vpe);
+    else
+        its_vpe_send_inv_db(vpe);
 }
 
 void its_vpe_mask_db(struct its_vpe *vpe)
@@ -1183,6 +1290,15 @@ static int gicv4_vpe_set_affinity(struct vcpu *vcpu)
 
     vpe->col_idx = to;
 
+    /*
+     * GICv4.1 allows us to skip VMOVP if moving to a cpu whose RD
+     * is sharing its VPE table with the current one.
+     */
+    if ( gic_has_v4_1_extension() )
+        if ( cpumask_empty(vpe_table_mask_cpu(to)) &&
+             cpumask_test_cpu(from, vpe_table_mask_cpu(to)) )
+            goto out;
+
     ret = its_send_cmd_vmovp(vpe);
     if ( ret )
         goto out;
@@ -1206,8 +1322,27 @@ void vgic_v4_load(struct vcpu *vcpu)
      * corresponding to our current CPU expects us here
      */
     WARN_ON(gicv4_vpe_set_affinity(vcpu));
-    its_vpe_mask_db(vpe);
-    its_make_vpe_resident(vpe, vcpu->processor);
+
+    if ( gic_has_v4_1_extension() )
+    {
+        /* GICv4.1 can directly deal with doorbells */
+        its_make_vpe_4_1_resident(vpe, vcpu->processor);
+    }
+    else
+    {
+        /* Disabled the doorbell, as we're about to enter the guest */
+        its_vpe_mask_db(vpe);
+        its_make_vpe_resident(vpe, vcpu->processor);
+    }
+
+    /*
+     * Now that the VPE is resident, let's get rid of a potential
+     * doorbell interrupt that would still be pending. This is a
+     * GICv4.0 only "feature".
+     */
+    if ( !gic_has_v4_1_extension() )
+        gicv4_vpe_send_clear(vpe);
+
     vpe->resident = true;
 }
 
@@ -1218,16 +1353,23 @@ void vgic_v4_put(struct vcpu *vcpu, bool need_db)
     if ( !vpe->resident )
         return;
 
-    its_make_vpe_non_resident(vpe, vcpu->processor);
-    if ( need_db )
-        /* Enable the doorbell, as the guest is going to block */
-        its_vpe_unmask_db(vpe);
+    if ( !gic_has_v4_1_extension() )
+    {
+        its_make_vpe_non_resident(vpe, vcpu->processor);
+        if ( need_db )
+            /* Enable the doorbell, as the guest is going to block */
+            its_vpe_unmask_db(vpe);
+    }
+    else
+        /* GICv4.1 can directly deal with doorbells */
+        its_make_vpe_4_1_non_resident(vpe, vcpu->processor, need_db);
+
     vpe->resident = false;
 }
 
 static int its_vlpi_set_doorbell(struct its_vlpi_map *map, bool enable)
 {
-    if (map->db_enabled == enable)
+    if ( map->db_enabled == enable )
         return 0;
 
     map->db_enabled = enable;
@@ -1288,11 +1430,139 @@ int its_set_vlpi_state(struct pending_irq *pirq, bool state)
     return ret;
 }
 
+bool vgic_has_directVSGI(struct domain *d)
+{
+    return ( find_4_1_its() != NULL ) && (d->arch.vgic.version == GIC_V4_1);
+}
+
 static void encode_vmovp_v4_1(uint64_t *cmd, uint32_t default_db_pintid)
 {
     /* Always requiring a Default Doorbell on GICv4.1 */
     cmd[2] |= GITS_DB_BIT;
     cmd[3] |= default_db_pintid;
+}
+
+static void gicv4_vpe_send_clear(struct its_vpe *vpe)
+{
+    if ( gic_support_directLPI() )
+    {
+        void __iomem *rdbase;
+
+        rdbase = per_cpu(rbase, vpe->col_idx);
+        /* Clear potential pending state */
+        writeq_relaxed(vpe->vpe_db_lpi, rdbase + GICR_CLRLPIR);
+        wait_for_syncr(rdbase);
+    }
+    else
+    {
+        unsigned long flags;
+
+        spin_lock_irqsave(&vpe_proxy.lock, flags);
+
+        gicv4_vpe_db_proxy_map_locked(vpe);
+
+        its_send_cmd_clear(vpe_proxy.dev->hw_its, vpe_proxy.dev->host_devid,
+                           vpe->vpe_proxy_event);
+
+        spin_unlock_irqrestore(&vpe_proxy.lock, flags);
+    }
+}
+
+static void its_make_vpe_4_1_resident(struct its_vpe *vpe, unsigned int cpu)
+{
+    void __iomem *vlpi_base = gic_data_rdist_vlpi_base(cpu);
+    uint64_t val = 0;
+
+    its_clear_vpend_valid(vlpi_base, 0, 0);
+    val |= GICR_VPENDBASER_Valid;
+    /* All guest LPIs are forwarded as Group 1 */
+    val |= GICR_VPENDBASER_4_1_VGRP1EN;
+    val |= FIELD_PREP(GICR_VPENDBASER_4_1_VPEID, vpe->vpe_id);
+
+    gits_write_vpendbaser(val, vlpi_base + GICR_VPENDBASER);
+}
+
+static void its_make_vpe_4_1_non_resident(struct its_vpe *vpe, unsigned int cpu,
+                                          bool req_db)
+{
+    void __iomem *vlpi_base = gic_data_rdist_vlpi_base(cpu);
+    uint64_t val;
+
+    if ( req_db )
+    {
+        /*
+         * vPE is going to block: make the vPE non-resident with
+         * PendingLast clear and DB set. The GIC guarantees that if
+         * we read-back PendingLast clear, then a doorbell will be
+         * delivered when an interrupt comes.
+         */
+        val = its_clear_vpend_valid(vlpi_base,
+                                    GICR_VPENDBASER_PendingLast,
+                                    GICR_VPENDBASER_4_1_DB);
+        vpe->pending_last = val & GICR_VPENDBASER_PendingLast;
+    }
+    else
+    {
+        /*
+         * We're not blocking, so just make the vPE non-resident
+         * with PendingLast set, indicating that we'll be back.
+         * When GICR_VPENDBASER.Valid is written from 1 to 0,
+         * if GICR_VPENDBASER.PendingLast is written as 1 then Doorbell bit
+         * is treated as 0.
+         */
+         val = its_clear_vpend_valid(vlpi_base,
+                                     0, GICR_VPENDBASER_PendingLast);
+         vpe->pending_last = true;
+    }
+}
+
+static int its_vpe_invall(struct its_vpe *vpe)
+{
+    struct host_its *its;
+
+    list_for_each_entry(its, &host_its_list, entry)
+    {
+        if ( !its->is_v4 )
+            continue;
+
+        /*
+         * Sending a VINVALL to a single ITS is enough, as all
+         * we need is to reach the redistributors.
+         */
+        return its_send_cmd_vinvall(its, vpe);
+    }
+
+    return 0;
+}
+
+static void its_vpe_4_1_invall(struct its_vpe *vpe)
+{
+    unsigned int cpu;
+    void __iomem *rdbase;
+    uint64_t val;
+    unsigned long flags;
+
+    val  = GICR_INVALLR_V;
+    val |= FIELD_PREP(GICR_INVALLR_VPEID, vpe->vpe_id);
+
+    /* Target the redistributor this vPE is currently mapped on */
+    cpu = vpe_to_cpuid_lock(vpe, &flags);
+    rdbase = GICD_RDIST_BASE_CPU(cpu);
+    writeq_relaxed(val, rdbase + GICR_INVALLR);
+    wait_for_syncr(rdbase);
+    vpe_to_cpuid_unlock(vpe, &flags);
+}
+
+int gicv4_its_handle_invall(struct domain *d, struct vcpu *vcpu)
+{
+    struct its_vpe *vpe = d->arch.vgic.its_vm->vpes[vcpu->vcpu_id];
+
+    if ( !gic_has_v4_1_extension() )
+        return its_vpe_invall(vpe);
+
+    its_vpe_4_1_invall(vpe);
+
+    return 0;
 }
 
 static uint64_t inherit_vpe_l1_table_from_rd(void)

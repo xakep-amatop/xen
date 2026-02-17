@@ -991,7 +991,15 @@ int its_inv_lpi(struct host_its *its, struct its_device *dev,
     int ret;
 
     if ( event_is_forwarded_to_vcpu(dev, eventid) )
-        return its_send_cmd_vinv(its, dev, eventid);
+    {
+        if ( gic_has_v4_1_extension() )
+        {
+            direct_lpi_inv(dev, eventid, 0, cpu);
+            return 0;
+        }
+        else
+            return its_send_cmd_vinv(its, dev, eventid);
+    }
 
     ret = its_send_cmd_inv(its, dev->host_devid, eventid);
     if ( ret )
@@ -1010,7 +1018,7 @@ int its_inv_lpi(struct host_its *its, struct its_device *dev,
  * increasing both @eventid and @lpi to cover the number of requested LPIs.
  */
 static int gicv3_its_map_host_events(struct host_its *its,
-                                     uint32_t devid, uint32_t eventid,
+                                     struct its_device *dev, uint32_t eventid,
                                      uint32_t lpi, uint32_t nr_events)
 {
     uint32_t i;
@@ -1019,11 +1027,12 @@ static int gicv3_its_map_host_events(struct host_its *its,
     for ( i = 0; i < nr_events; i++ )
     {
         /* For now we map every host LPI to host CPU 0 */
-        ret = its_send_cmd_mapti(its, devid, eventid + i, lpi + i, 0);
+        ret = its_send_cmd_mapti(its, dev->host_devid, eventid + i, lpi + i, 0);
         if ( ret )
             return ret;
 
-        ret = its_send_cmd_inv(its, devid, eventid + i);
+        /* TODO: Consider using INVALL here. Didn't work on the model, though. */
+        ret = its_inv_lpi(its, dev, eventid + i, 0);
         if ( ret )
             return ret;
     }
@@ -1223,7 +1232,7 @@ int gicv3_its_map_guest_device(struct domain *d,
         if ( ret < 0 )
             break;
 
-        ret = gicv3_its_map_host_events(hw_its, host_devid, i * LPI_BLOCK,
+        ret = gicv3_its_map_host_events(hw_its, dev, i * LPI_BLOCK,
                                         dev->host_lpi_blocks[i], LPI_BLOCK);
         if ( ret < 0 )
             break;
