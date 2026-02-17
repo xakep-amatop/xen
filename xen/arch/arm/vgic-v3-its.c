@@ -32,6 +32,9 @@
 #include <asm/mmio.h>
 #include <asm/gic_v3_defs.h>
 #include <asm/gic_v3_its.h>
+#ifdef CONFIG_GICV4
+#include <asm/gic_v4_its.h>
+#endif
 #include <asm/vgic.h>
 #include <asm/vgic-emul.h>
 #include <asm/vreg.h>
@@ -589,6 +592,9 @@ static int its_handle_invall(struct virt_its *its, uint64_t *cmdptr)
 
     read_unlock(&its->d->arch.vgic.pend_lpi_tree_lock);
     spin_unlock_irqrestore(&vcpu->arch.vgic.lock, flags);
+
+    if ( gic_is_gicv4() )
+        return gicv4_its_handle_invall(its->d, vcpu);
 
     return ret;
 }
