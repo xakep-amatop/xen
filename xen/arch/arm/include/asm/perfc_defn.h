@@ -2,6 +2,14 @@
 /*#ifndef __XEN_PERFC_DEFN_H__*/
 /*#define __XEN_PERFC_DEFN_H__*/
 
+/*
+ * Keep this file lightweight: avoid pulling in heavy headers via perfc.h.
+ * NR_GIC_SGI is 16 for ARM GIC.
+ */
+#ifndef NR_GIC_SGI
+#define NR_GIC_SGI 16
+#endif
+
 PERFCOUNTER(invalid_hypercalls, "invalid hypercalls")
 
 PERFCOUNTER(trap_wfi,      "trap: wfi")
@@ -48,6 +56,7 @@ PERFCOUNTER(vgic_sgi_list  ,            "vgic: SGI send to list")
 PERFCOUNTER(vgic_sgi_others,            "vgic: SGI send to others")
 PERFCOUNTER(vgic_sgi_self,              "vgic: SGI send to self")
 PERFCOUNTER(vgic_irq_migrates,          "vgic: irq migration")
+PERFCOUNTER_ARRAY(vgic_sgi_its,         "vgic: vSGI inserts via ITS", NR_GIC_SGI)
 
 PERFCOUNTER(vuart_reads,  "vuart: read")
 PERFCOUNTER(vuart_writes, "vuart: write")
