@@ -613,6 +613,7 @@ struct arm_smmu_device {
 	int				combined_irq;
 	u32				sync_nr;
 	u8				prev_cmd_opcode;
+	bool				gerror_blocked;
 
 	unsigned long			ias; /* IPA */
 	unsigned long			oas; /* PA */

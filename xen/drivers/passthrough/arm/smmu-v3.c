@@ -94,6 +94,12 @@
 
 #include "smmu-v3.h"
 
+#ifdef CONFIG_SYSTEM_SUSPEND
+#define init_or_smmu_suspend
+#else
+#define init_or_smmu_suspend __init
+#endif
+
 #define ARM_SMMU_VTCR_SH_IS		3
 #define ARM_SMMU_VTCR_RGN_WBWA		1
 #define ARM_SMMU_VTCR_TG0_4K		0
@@ -903,10 +909,10 @@ static void arm_smmu_priq_tasklet(void *dev)
 
 static int arm_smmu_device_disable(struct arm_smmu_device *smmu);
 
-static void arm_smmu_gerror_handler(int irq, void *dev)
+/* The caller must serialize with the IRQ handler. */
+static void arm_smmu_handle_gerror(struct arm_smmu_device *smmu)
 {
 	u32 gerror, gerrorn, active;
-	struct arm_smmu_device *smmu = dev;
 
 	gerror = readl_relaxed(smmu->base + ARM_SMMU_GERROR);
 	gerrorn = readl_relaxed(smmu->base + ARM_SMMU_GERRORN);
@@ -946,6 +952,14 @@ static void arm_smmu_gerror_handler(int irq, void *dev)
 		arm_smmu_cmdq_skip_err(smmu);
 
 	writel(gerror, smmu->base + ARM_SMMU_GERRORN);
+}
+
+static void arm_smmu_gerror_handler(int irq, void *dev)
+{
+	struct arm_smmu_device *smmu = dev;
+
+	if (!read_atomic(&smmu->gerror_blocked))
+		arm_smmu_handle_gerror(smmu);
 }
 
 static void arm_smmu_combined_irq_handler(int irq, void *dev)
@@ -1871,8 +1885,8 @@ static int arm_smmu_write_reg_sync(struct arm_smmu_device *smmu, u32 val,
 }
 
 /* GBPA is "special" */
-static int __init arm_smmu_update_gbpa(struct arm_smmu_device *smmu,
-                                       u32 set, u32 clr)
+static int init_or_smmu_suspend
+arm_smmu_update_gbpa(struct arm_smmu_device *smmu, u32 set, u32 clr)
 {
 	int ret;
 	u32 reg, __iomem *gbpa = smmu->base + ARM_SMMU_GBPA;
@@ -1891,6 +1905,20 @@ static int __init arm_smmu_update_gbpa(struct arm_smmu_device *smmu,
 	if (ret)
 		dev_err(smmu->dev, "GBPA not responding to update\n");
 	return ret;
+}
+
+static void arm_smmu_clear_msi_cfg(struct arm_smmu_device *smmu)
+{
+	/*
+	 * IHI0070G.b, sections 6.3.21 and 6.3.30: ADDR resets to UNKNOWN.
+	 * ADDR == 0 disables MSIs while allowing wired IRQs. The corresponding
+	 * IRQ_CTRL and IRQ_CTRLACK enable bits must be clear before writing.
+	 */
+	writeq_relaxed(0, smmu->base + ARM_SMMU_GERROR_IRQ_CFG0);
+	writeq_relaxed(0, smmu->base + ARM_SMMU_EVTQ_IRQ_CFG0);
+
+	if (smmu->features & ARM_SMMU_FEAT_PRI)
+		writeq_relaxed(0, smmu->base + ARM_SMMU_PRIQ_IRQ_CFG0);
 }
 
 #ifdef CONFIG_MSI
@@ -1921,13 +1949,7 @@ static void arm_smmu_setup_msis(struct arm_smmu_device *smmu)
 	int ret, nvec = ARM_SMMU_MAX_MSIS;
 	struct device *dev = smmu->dev;
 
-	/* Clear the MSI address regs */
-	writeq_relaxed(0, smmu->base + ARM_SMMU_GERROR_IRQ_CFG0);
-	writeq_relaxed(0, smmu->base + ARM_SMMU_EVTQ_IRQ_CFG0);
-
-	if (smmu->features & ARM_SMMU_FEAT_PRI)
-		writeq_relaxed(0, smmu->base + ARM_SMMU_PRIQ_IRQ_CFG0);
-	else
+	if (!(smmu->features & ARM_SMMU_FEAT_PRI))
 		nvec--;
 
 	if (!(smmu->features & ARM_SMMU_FEAT_MSI))
@@ -1968,7 +1990,8 @@ static void arm_smmu_setup_msis(struct arm_smmu_device *smmu)
 static inline void arm_smmu_setup_msis(struct arm_smmu_device *smmu) { }
 #endif /* CONFIG_MSI */
 
-static void __init arm_smmu_free_irqs(struct arm_smmu_device *smmu)
+static void init_or_smmu_suspend
+arm_smmu_free_irqs(struct arm_smmu_device *smmu)
 {
 	int irq;
 
@@ -2052,18 +2075,37 @@ err_free_evtq_irq:
 	return ret;
 }
 
-static int __init arm_smmu_setup_irqs(struct arm_smmu_device *smmu)
+static int arm_smmu_enable_irqs(struct arm_smmu_device *smmu)
 {
-	int ret, irq;
+	int ret;
 	u32 irqen_flags = IRQ_CTRL_EVTQ_IRQEN | IRQ_CTRL_GERROR_IRQEN;
 
-	/* Disable IRQs first */
-	ret = arm_smmu_write_reg_sync(smmu, 0, ARM_SMMU_IRQ_CTRL,
-				      ARM_SMMU_IRQ_CTRLACK);
-	if (ret) {
-		dev_err(smmu->dev, "failed to disable irqs\n");
+	if ( smmu->features & ARM_SMMU_FEAT_PRI )
+		irqen_flags |= IRQ_CTRL_PRIQ_IRQEN;
+
+	/* Enable interrupt generation on the SMMU */
+	ret = arm_smmu_write_reg_sync(smmu, irqen_flags,
+				      ARM_SMMU_IRQ_CTRL, ARM_SMMU_IRQ_CTRLACK);
+	if ( ret )
+	{
+		dev_warn(smmu->dev, "failed to enable irqs\n");
 		return ret;
 	}
+
+	return 0;
+}
+
+static int arm_smmu_disable_irqs(struct arm_smmu_device *smmu)
+{
+	return arm_smmu_write_reg_sync(smmu, 0, ARM_SMMU_IRQ_CTRL,
+				       ARM_SMMU_IRQ_CTRLACK);
+}
+
+/* Probe-time only; reset has configured the queues and disabled IRQs. */
+static int init_or_smmu_suspend
+arm_smmu_setup_irqs(struct arm_smmu_device *smmu)
+{
+	int ret, irq;
 
 	irq = smmu->combined_irq;
 	if (irq) {
@@ -2085,22 +2127,7 @@ static int __init arm_smmu_setup_irqs(struct arm_smmu_device *smmu)
 		}
 	}
 
-	if (smmu->features & ARM_SMMU_FEAT_PRI)
-		irqen_flags |= IRQ_CTRL_PRIQ_IRQEN;
-
-	/* Enable interrupt generation on the SMMU */
-	ret = arm_smmu_write_reg_sync(smmu, irqen_flags,
-				      ARM_SMMU_IRQ_CTRL, ARM_SMMU_IRQ_CTRLACK);
-	if (ret) {
-		dev_warn(smmu->dev, "failed to enable irqs\n");
-		goto err_free_irqs;
-	}
-
 	return 0;
-
-err_free_irqs:
-	arm_smmu_free_irqs(smmu);
-	return ret;
 }
 
 static int arm_smmu_device_disable(struct arm_smmu_device *smmu)
@@ -2114,18 +2141,31 @@ static int arm_smmu_device_disable(struct arm_smmu_device *smmu)
 	return ret;
 }
 
-static int __init arm_smmu_device_reset(struct arm_smmu_device *smmu)
+static int init_or_smmu_suspend
+arm_smmu_device_reset(struct arm_smmu_device *smmu, bool resume)
 {
 	int ret;
 	u32 reg, enables;
 	struct arm_smmu_cmdq_ent cmd;
+
+	ret = arm_smmu_disable_irqs(smmu);
+	if (ret) {
+		dev_err(smmu->dev, "failed to disable irqs\n");
+		return ret;
+	}
+
+	/* A pending GERROR IRQ must not access CMDQ while it is reset. */
+	write_atomic(&smmu->gerror_blocked, true);
+	arm_smmu_clear_msi_cfg(smmu);
 
 	/* Clear CR0 and sync (disables SMMU and queue processing) */
 	reg = readl_relaxed(smmu->base + ARM_SMMU_CR0);
 	if (reg & CR0_SMMUEN) {
 		dev_warn(smmu->dev, "SMMU currently enabled! Resetting...\n");
 		WARN_ON(!disable_bypass);
-		arm_smmu_update_gbpa(smmu, GBPA_ABORT, 0);
+		ret = arm_smmu_update_gbpa(smmu, GBPA_ABORT, 0);
+		if (ret)
+			return ret;
 	}
 
 	ret = arm_smmu_device_disable(smmu);
@@ -2164,10 +2204,15 @@ static int __init arm_smmu_device_reset(struct arm_smmu_device *smmu)
 		return ret;
 	}
 
+	/* GERROR handling can use CMDQ again once its registers are restored. */
+	write_atomic(&smmu->gerror_blocked, false);
+
 	/* Invalidate any cached configuration */
 	cmd.opcode = CMDQ_OP_CFGI_ALL;
 	arm_smmu_cmdq_issue_cmd(smmu, &cmd);
-	arm_smmu_cmdq_issue_sync(smmu);
+	ret = arm_smmu_cmdq_issue_sync(smmu);
+	if (ret)
+		return ret;
 
 	/* Invalidate any stale TLB entries */
 	if (smmu->features & ARM_SMMU_FEAT_HYP) {
@@ -2177,7 +2222,9 @@ static int __init arm_smmu_device_reset(struct arm_smmu_device *smmu)
 
 	cmd.opcode = CMDQ_OP_TLBI_NSNH_ALL;
 	arm_smmu_cmdq_issue_cmd(smmu, &cmd);
-	arm_smmu_cmdq_issue_sync(smmu);
+	ret = arm_smmu_cmdq_issue_sync(smmu);
+	if (ret)
+		return ret;
 
 	/* Event queue */
 	writeq_relaxed(smmu->evtq.q.q_base, smmu->base + ARM_SMMU_EVTQ_BASE);
@@ -2220,17 +2267,18 @@ static int __init arm_smmu_device_reset(struct arm_smmu_device *smmu)
 		}
 	}
 
-	ret = arm_smmu_setup_irqs(smmu);
-	if (ret) {
-		dev_err(smmu->dev, "failed to setup irqs\n");
-		return ret;
+	/* Register handlers only after their queues and tasklets are ready. */
+	if (!resume) {
+		ret = arm_smmu_setup_irqs(smmu);
+		if (ret) {
+			dev_err(smmu->dev, "failed to setup irqs\n");
+			return ret;
+		}
 	}
 
-	/* Initialize tasklets for threaded IRQs*/
-	tasklet_init(&smmu->evtq_irq_tasklet, arm_smmu_evtq_tasklet, smmu);
-	tasklet_init(&smmu->priq_irq_tasklet, arm_smmu_priq_tasklet, smmu);
-	tasklet_init(&smmu->combined_irq_tasklet, arm_smmu_combined_irq_tasklet,
-				 smmu);
+	ret = arm_smmu_enable_irqs(smmu);
+	if (ret)
+		goto err_free_irqs;
 
 	/* Enable the SMMU interface, or ensure bypass */
 	if (disable_bypass) {
@@ -2247,10 +2295,18 @@ static int __init arm_smmu_device_reset(struct arm_smmu_device *smmu)
 		goto err_free_irqs;
 	}
 
+	/* IHI0070G.b, section 6.3.16: re-enabling IRQs does not replay events. */
+	if (resume)
+		tasklet_schedule(&smmu->evtq_irq_tasklet);
+	if (resume && (smmu->features & ARM_SMMU_FEAT_PRI) &&
+	    !queue_empty(&smmu->priq.q.llq))
+		tasklet_schedule(&smmu->priq_irq_tasklet);
+
 	return 0;
 
 err_free_irqs:
-	arm_smmu_free_irqs(smmu);
+	if (!resume)
+		arm_smmu_free_irqs(smmu);
 	return ret;
 }
 
@@ -2615,10 +2671,21 @@ static int __init arm_smmu_device_probe(struct platform_device *pdev)
 	if (ret)
 		goto out_free;
 
+	/* Initialize tasklets for threaded IRQs*/
+	tasklet_init(&smmu->evtq_irq_tasklet, arm_smmu_evtq_tasklet, smmu);
+	tasklet_init(&smmu->priq_irq_tasklet, arm_smmu_priq_tasklet, smmu);
+	tasklet_init(&smmu->combined_irq_tasklet, arm_smmu_combined_irq_tasklet,
+				smmu);
+
 	/* Reset the device */
-	ret = arm_smmu_device_reset(smmu);
-	if (ret)
+	ret = arm_smmu_device_reset(smmu, false);
+	if (ret) {
+		/* Reset may have enabled queues before failing. */
+		if (arm_smmu_device_disable(smmu))
+			panic("SMMUv3: %s: Failed to disable during probe cleanup\n",
+			      dev_name(smmu->dev));
 		goto out_free;
+	}
 
 	/*
 	 * Keep a list of all probed devices. This will be used to query
@@ -2631,7 +2698,6 @@ static int __init arm_smmu_device_probe(struct platform_device *pdev)
 	spin_unlock(&arm_smmu_devices_lock);
 
 	return 0;
-
 
 out_free:
 	arm_smmu_free_structures(smmu);
@@ -2912,6 +2978,142 @@ static void arm_smmu_iommu_xen_domain_teardown(struct domain *d)
 	xfree(xen_domain);
 }
 
+#ifdef CONFIG_SYSTEM_SUSPEND
+
+static void arm_smmu_save_queue_producers(struct arm_smmu_device *smmu)
+{
+	/*
+	 * IHI0070G.b, sections 6.3.9.4 and 6.3.9.5: EVTQ/PRIQ disable
+	 * acknowledgements make committed entries visible. The caller must
+	 * wait for these acknowledgements before reading the producer indices.
+	 */
+	if (queue_sync_prod_in(&smmu->evtq.q) == -EOVERFLOW)
+		dev_warn(smmu->dev, "EVTQ overflow detected during suspend\n");
+	if ((smmu->features & ARM_SMMU_FEAT_PRI) &&
+	    queue_sync_prod_in(&smmu->priq.q) == -EOVERFLOW)
+		dev_warn(smmu->dev, "PRIQ overflow detected during suspend\n");
+}
+
+static void arm_smmu_reset_for_suspend_rollback(struct arm_smmu_device *smmu)
+{
+	int ret;
+	u32 reg;
+
+	/*
+	 * The queues have been requested to stop, but a CR0ACK timeout may
+	 * have skipped saving their producer indices. Wait for the queue
+	 * disable acknowledgements before reset overwrites those indices.
+	 */
+	ret = readl_relaxed_poll_timeout(smmu->base + ARM_SMMU_CR0ACK, reg,
+					 !(reg & (CR0_EVTQEN | CR0_PRIQEN)),
+					 1, ARM_SMMU_POLL_TIMEOUT_US);
+	if (ret)
+		panic("SMMUv3: %s: Queue stop timed out during rollback: %d\n",
+		      dev_name(smmu->dev), ret);
+
+	arm_smmu_save_queue_producers(smmu);
+	ret = arm_smmu_device_reset(smmu, true);
+
+	/* The host suspend error path allows domains to run again. */
+	if ( ret )
+		panic("SMMUv3: %s: Failed to reset during suspend rollback: %d\n",
+		      dev_name(smmu->dev), ret);
+}
+
+static int arm_smmu_suspend(void)
+{
+	struct arm_smmu_device *smmu;
+	int ret = 0;
+
+	list_for_each_entry(smmu, &arm_smmu_devices, devices)
+	{
+		/* Abort all transactions before disable to avoid spurious bypass */
+		ret = arm_smmu_update_gbpa(smmu, GBPA_ABORT, 0);
+		if ( ret )
+			goto rollback_previous;
+
+		/* Disable the SMMU via CR0.EN and all queues except CMDQ */
+		ret = arm_smmu_write_reg_sync(smmu, CR0_CMDQEN, ARM_SMMU_CR0,
+					ARM_SMMU_CR0ACK);
+		if ( ret )
+		{
+			dev_err(smmu->dev, "Timed-out while disabling smmu\n");
+			goto fail;
+		}
+
+		arm_smmu_save_queue_producers(smmu);
+
+		/*
+		 * At this point the translation interface is disabled and the
+		 * SMMU won't access translation/config structures, even
+		 * speculatively, as per the IHI0070 spec (section 6.3.9.6).
+		 * CMDQ is still enabled so that a CMD_SYNC can complete any
+		 * previously issued commands.
+		 */
+
+		/* Ensure all previously issued commands have completed. */
+		ret = arm_smmu_cmdq_issue_sync(smmu);
+		if ( ret )
+		{
+			dev_err(smmu->dev, "Timed-out waiting for pending commands\n");
+			goto fail;
+		}
+
+		/* Stop IRQ generation before gating the handler and disabling CMDQ. */
+		ret = arm_smmu_disable_irqs(smmu);
+		if (ret) {
+			dev_err(smmu->dev, "Timed-out while disabling SMMU irqs\n");
+			goto fail;
+		}
+		write_atomic(&smmu->gerror_blocked, true);
+
+		/* Disable everything */
+		ret = arm_smmu_device_disable(smmu);
+		if ( ret )
+			goto fail;
+
+		/* Other CPUs are offline and the IRQ handler is gated above. */
+		arm_smmu_handle_gerror(smmu);
+
+		dev_dbg(smmu->dev, "Suspended smmu\n");
+	}
+
+	return 0;
+
+ fail:
+	/* Reset the device that failed as well as any already-suspended ones. */
+	arm_smmu_reset_for_suspend_rollback(smmu);
+
+ rollback_previous:
+	/* An initial GBPA failure leaves this SMMU enabled: do not reset it. */
+	list_for_each_entry_continue_reverse(smmu, &arm_smmu_devices, devices)
+		arm_smmu_reset_for_suspend_rollback(smmu);
+
+	return ret;
+}
+
+static void arm_smmu_resume(void)
+{
+	int ret;
+	struct arm_smmu_device *smmu;
+
+	list_for_each_entry(smmu, &arm_smmu_devices, devices)
+	{
+		dev_dbg(smmu->dev, "Resuming device\n");
+
+		/*
+		 * The reset will re-initialize all the base addresses, queues,
+		 * prod and cons maintained within struct arm_smmu_device as well as
+		 * re-enable the interrupts.
+		 */
+		ret = arm_smmu_device_reset(smmu, true);
+		if ( ret )
+			panic("SMMUv3: %s: Failed to reset during resume: %d\n",
+			      dev_name(smmu->dev), ret);
+	}
+}
+#endif
+
 static const struct iommu_ops arm_smmu_iommu_ops = {
 	.page_sizes		= PAGE_SIZE_4K,
 	.init			= arm_smmu_iommu_xen_domain_init,
@@ -2925,6 +3127,10 @@ static const struct iommu_ops arm_smmu_iommu_ops = {
 	.dt_xlate		= arm_smmu_dt_xlate,
 	.add_device		= arm_smmu_add_device,
 	.remove_device		= arm_smmu_remove_device,
+#ifdef CONFIG_SYSTEM_SUSPEND
+	.suspend		= arm_smmu_suspend,
+	.resume			= arm_smmu_resume,
+#endif
 };
 
 static __init int arm_smmu_dt_init(struct dt_device_node *dev,
