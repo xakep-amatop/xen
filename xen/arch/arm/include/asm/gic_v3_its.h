@@ -133,6 +133,7 @@ struct host_its {
 
 /* Map a collection for this host CPU to each host ITS. */
 int gicv3_its_setup_collection(unsigned int cpu);
+int gicv3_do_wait_for_rwp(void __iomem *base);
 
 #ifdef CONFIG_HAS_ITS
 

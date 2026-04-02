@@ -274,8 +274,8 @@ static void gicv3_enable_sre(void)
     isb();
 }
 
-/* Wait for completion of a distributor change */
-static void gicv3_do_wait_for_rwp(void __iomem *base)
+/* Wait for completion of a distributor/redistributor write-pending change. */
+int gicv3_do_wait_for_rwp(void __iomem *base)
 {
     uint32_t val;
     bool timeout = false;
@@ -295,17 +295,22 @@ static void gicv3_do_wait_for_rwp(void __iomem *base)
     } while ( 1 );
 
     if ( timeout )
+    {
         dprintk(XENLOG_ERR, "RWP timeout\n");
+        return -ETIMEDOUT;
+    }
+
+    return 0;
 }
 
 static void gicv3_dist_wait_for_rwp(void)
 {
-    gicv3_do_wait_for_rwp(GICD);
+    (void)gicv3_do_wait_for_rwp(GICD);
 }
 
 static void gicv3_redist_wait_for_rwp(void)
 {
-    gicv3_do_wait_for_rwp(GICD_RDIST_BASE);
+    (void)gicv3_do_wait_for_rwp(GICD_RDIST_BASE);
 }
 
 static void gicv3_wait_for_rwp(int irq)
@@ -925,7 +930,7 @@ static int __init gicv3_populate_rdist(void)
                     gicv3_set_redist_address(rdist_addr, procnum);
 
                     ret = gicv3_lpi_init_rdist(ptr);
-                    if ( ret && ret != -ENODEV )
+                    if ( ret && ret != -ENODEV && ret != -EBUSY )
                     {
                         printk("GICv3: CPU%d: Cannot initialize LPIs: %u\n",
                                smp_processor_id(), ret);
