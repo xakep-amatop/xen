@@ -285,6 +285,9 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
             "SYSTEM_SUSPEND requested, epoint=%#"PRIregister", cid=%#"PRIregister"\n",
             epoint, cid);
 
+    if ( is_control_domain(d) )
+        host_system_suspend(d);
+
     return rc;
 }
 

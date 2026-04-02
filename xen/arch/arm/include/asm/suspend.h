@@ -41,6 +41,7 @@ void hyp_resume(void);
 bool host_system_suspend_allowed(void);
 void host_system_suspend_disable(const char *reason);
 bool host_system_suspend_domains_ready(const struct domain *skip);
+void host_system_suspend(struct domain *d);
 
 #else /* !CONFIG_SYSTEM_SUSPEND */
 
@@ -50,6 +51,7 @@ static inline bool host_system_suspend_domains_ready(const struct domain *skip)
 {
     return false;
 }
+static inline void host_system_suspend(struct domain *d) {}
 #endif
 
 #endif /* ARM_SUSPEND_H */
