@@ -116,6 +116,9 @@
 /* We allocate LPIs on the hosts in chunks of 32 to reduce handling overhead. */
 #define LPI_BLOCK                       32U
 
+#ifdef CONFIG_GICV4
+#include <asm/gic_v4_its.h>
+#endif
 /*
  * Describes a device which is using the ITS and is used by a guest.
  * Since device IDs are per ITS (in contrast to vLPIs, which are per
@@ -135,6 +138,9 @@ struct its_device {
     uint32_t eventids;                  /* Number of event IDs (MSIs) */
     uint32_t *host_lpi_blocks;          /* Which LPIs are used on the host */
     struct pending_irq *pend_irqs;      /* One struct per event */
+#ifdef CONFIG_GICV4
+    struct event_vlpi_map event_map;
+#endif
 };
 
 /* data structure for each hardware ITS */
@@ -254,6 +260,8 @@ int its_send_cmd_inv(struct host_its *its, uint32_t deviceid, uint32_t eventid);
 int its_send_cmd_clear(struct host_its *its, uint32_t deviceid, uint32_t eventid);
 int its_send_cmd_mapti(struct host_its *its, uint32_t deviceid,
                        uint32_t eventid, uint32_t pintid, uint16_t icid);
+int its_send_cmd_discard(struct host_its *its, struct its_device *dev,
+                         uint32_t eventid);
 
 int its_send_command(struct host_its *hw_its, const void *its_cmd);
 
@@ -263,6 +271,36 @@ struct its_device *get_its_device(struct domain *d, paddr_t vdoorbell,
 void lpi_write_config(uint8_t *prop_table, uint32_t lpi, uint8_t clr,
                       uint8_t set);
 
+#ifdef CONFIG_GICV4
+int gicv4_assign_guest_event(struct domain *d, paddr_t vdoorbell_address,
+                             uint32_t vdevid, uint32_t eventid,
+                             struct pending_irq *pirq);
+
+int gicv4_its_vlpi_move(struct pending_irq *pirq, struct vcpu *vcpu);
+int gicv4_its_vlpi_unmap(struct pending_irq *pirq);
+
+bool event_is_forwarded_to_vcpu(struct its_device *dev, uint32_t eventid);
+void its_vpe_mask_db(struct its_vpe *vpe);
+#else
+static inline int gicv4_assign_guest_event(struct domain *d,
+                                           paddr_t vdoorbell_address,
+                                           uint32_t vdevid, uint32_t eventid,
+                                           struct pending_irq *pirq)
+{
+    return -ENOSYS;
+}
+
+static inline int gicv4_its_vlpi_unmap(struct pending_irq *pirq)
+{
+    return -ENOSYS;
+}
+
+static inline bool event_is_forwarded_to_vcpu(struct its_device *dev,
+                                              uint32_t eventid)
+{
+    return false;
+}
+#endif
 #else
 
 #ifdef CONFIG_ACPI
