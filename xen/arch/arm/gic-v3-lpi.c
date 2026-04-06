@@ -492,6 +492,30 @@ static int find_unused_host_lpi(uint32_t start, uint32_t *index)
     return -1;
 }
 
+uint8_t *lpi_host_proptable(void)
+{
+    return lpi_data.lpi_property;
+}
+
+unsigned long lpi_max_host_lpis(void)
+{
+    return lpi_data.max_host_lpi_ids;
+}
+
+void lpi_write_config(uint8_t *prop_table, uint32_t lpi, uint8_t clr,
+                      uint8_t set)
+{
+    u8 *cfg;
+
+    cfg = prop_table + lpi - LPI_OFFSET;
+    *cfg &= ~clr;
+    *cfg |= set | LPI_PROP_RES1;
+
+    /* Make the above write visible to the redistributors. */
+    if ( lpi_data.flags & LPI_PROPTABLE_NEEDS_FLUSHING )
+        clean_and_invalidate_dcache_va_range(cfg, sizeof(*cfg));
+}
+
 /*
  * Allocate a block of 32 LPIs on the given host ITS for device "devid",
  * starting with "eventid". Put them into the respective ITT by issuing a
