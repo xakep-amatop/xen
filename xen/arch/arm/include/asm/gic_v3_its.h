@@ -157,6 +157,31 @@ int gicv3_its_setup_collection(unsigned int cpu);
 
 #ifdef CONFIG_HAS_ITS
 
+struct lpi_data {
+    /* The global LPI property table, shared by all redistributors. */
+    uint8_t *lpi_property;
+    /*
+     * A two-level table to lookup LPIs firing on the host and look up the
+     * VCPU and virtual LPI number to inject into.
+     */
+    union host_lpi **host_lpis;
+    /*
+     * Number of physical LPIs the host supports. This is a property of
+     * the GIC hardware. We depart from the habit of naming these things
+     * "physical" in Xen, as the GICv3/4 spec uses the term "physical LPI"
+     * in a different context to differentiate them from "virtual LPIs".
+     */
+    unsigned long int max_host_lpi_ids;
+    /*
+     * Protects allocation and deallocation of host LPIs and next_free_lpi,
+     * but not the actual data stored in the host_lpi entry.
+     */
+    spinlock_t host_lpis_lock;
+    uint32_t next_free_lpi;
+    unsigned int flags;
+};
+extern struct lpi_data lpi_data;
+
 extern struct list_head host_its_list;
 
 #ifdef CONFIG_ACPI
@@ -234,6 +259,9 @@ int its_send_command(struct host_its *hw_its, const void *its_cmd);
 
 struct its_device *get_its_device(struct domain *d, paddr_t vdoorbell,
                                   uint32_t vdevid);
+
+void lpi_write_config(uint8_t *prop_table, uint32_t lpi, uint8_t clr,
+                      uint8_t set);
 
 #else
 
