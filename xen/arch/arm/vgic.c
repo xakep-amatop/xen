@@ -370,19 +370,27 @@ void domain_vgic_free(struct domain *d)
 
 int vcpu_vgic_init(struct vcpu *v)
 {
+    int ret;
     int i;
 
     v->arch.vgic.private_irqs = xzalloc(struct vgic_irq_rank);
     if ( v->arch.vgic.private_irqs == NULL )
-      return -ENOMEM;
+        return -ENOMEM;
+
+    v->arch.vgic.pending_irqs =
+        xzalloc_array(struct pending_irq, NR_LOCAL_IRQS);
+    if ( v->arch.vgic.pending_irqs == NULL )
+    {
+        ret = -ENOMEM;
+        goto free_private_irqs;
+    }
 
     /* SGIs/PPIs are always routed to this VCPU */
     vgic_rank_init(v->arch.vgic.private_irqs, 0, v->vcpu_id);
 
     v->domain->arch.vgic.handler->vcpu_init(v);
 
-    memset(&v->arch.vgic.pending_irqs, 0, sizeof(v->arch.vgic.pending_irqs));
-    for (i = 0; i < 32; i++)
+    for ( i = 0; i < NR_LOCAL_IRQS; i++ )
         vgic_init_pending_irq(&v->arch.vgic.pending_irqs[i], i);
 
     INIT_LIST_HEAD(&v->arch.vgic.inflight_irqs);
@@ -390,10 +398,16 @@ int vcpu_vgic_init(struct vcpu *v)
     spin_lock_init(&v->arch.vgic.lock);
 
     return 0;
+
+ free_private_irqs:
+    XFREE(v->arch.vgic.private_irqs);
+
+    return ret;
 }
 
 void vcpu_vgic_free(struct vcpu *v)
 {
+    XFREE(v->arch.vgic.pending_irqs);
     XFREE(v->arch.vgic.private_irqs);
 }
 
