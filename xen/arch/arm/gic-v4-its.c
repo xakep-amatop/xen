@@ -35,6 +35,7 @@
  */
 #define INVALID_VPEID (~0U)
 #define GICR_VPENDBASER_DIRTY_POLL_TIMEOUT_US 100000U
+#define GICR_SYNCR_POLL_TIMEOUT_US 100000U
 
 static unsigned long *vpeid_mask;
 
@@ -497,23 +498,46 @@ static int its_send_cmd_vmovp(struct its_vpe *vpe)
 }
 
 /* GICR_SYNCR.Busy == 1 until the invalidation completes. */
-static void wait_for_syncr(void __iomem *rdbase)
+static int wait_for_syncr(void __iomem *rdbase, const char *what)
 {
+    unsigned int timeout = GICR_SYNCR_POLL_TIMEOUT_US;
+
     while ( readl_relaxed(rdbase + GICR_SYNCR) & 1 )
+    {
+        if ( !timeout-- )
+        {
+            printk(XENLOG_WARNING
+                   "GICv4: timeout waiting for GICR_SYNCR.Busy to clear during %s\n",
+                   what);
+            return -ETIMEDOUT;
+        }
+
         cpu_relax();
+        udelay(1);
+    }
+
+    return 0;
 }
 
-void direct_lpi_inv(struct its_device *dev, uint32_t eventid,
-                    uint32_t db_lpi, unsigned int cpu)
+int direct_lpi_inv(struct its_device *dev, uint32_t eventid,
+                   uint32_t db_lpi, unsigned int cpu)
 {
     void __iomem *rdbase;
     uint64_t val;
+    int ret;
+
     /* Register-based LPI invalidation for DB on GICv4.0 */
     val = FIELD_PREP(GICR_INVLPIR_INTID, db_lpi);
 
     rdbase = per_cpu(rbase, cpu);
+
+    ret = wait_for_syncr(rdbase, "INVLPIR pre-check");
+    if ( ret )
+        return ret;
+
     writeq_relaxed(val, rdbase + GICR_INVLPIR);
-    wait_for_syncr(rdbase);
+
+    return wait_for_syncr(rdbase, "INVLPIR");
 }
 
 static void its_vpe_send_inv_db(struct its_vpe *vpe)
@@ -521,9 +545,14 @@ static void its_vpe_send_inv_db(struct its_vpe *vpe)
     if ( gic_support_directLPI() )
     {
         unsigned int cpu = vpe->col_idx;
+        int ret;
 
         /* Target the redistributor this VPE is currently known on */
-        direct_lpi_inv(NULL, 0, vpe->vpe_db_lpi, cpu);
+        ret = direct_lpi_inv(NULL, 0, vpe->vpe_db_lpi, cpu);
+        if ( ret )
+            printk(XENLOG_WARNING
+                   "ITS: failed to invalidate GICv4 VPE doorbell via INVLPIR: %d\n",
+                   ret);
     }
     else
     {
@@ -1174,11 +1203,27 @@ static void gicv4_vpe_db_proxy_move(struct its_vpe *vpe, unsigned int from,
     if ( gic_support_directLPI() )
     {
         void __iomem *rdbase;
+        int ret;
 
         rdbase = per_cpu(rbase, from);
+
+        ret = wait_for_syncr(rdbase, "CLRLPIR pre-check");
+        if ( ret )
+        {
+            printk(XENLOG_WARNING
+                   "ITS: failed to wait for GICR_SYNCR.Busy before CLRLPIR: %d\n",
+                   ret);
+            return;
+        }
+
         /* Clear potential pending state on the old redistributor */
         writeq_relaxed(vpe->vpe_db_lpi, rdbase + GICR_CLRLPIR);
-        wait_for_syncr(rdbase);
+
+        ret = wait_for_syncr(rdbase, "CLRLPIR");
+        if ( ret )
+            printk(XENLOG_WARNING
+                   "ITS: failed to wait for GICR_SYNCR.Busy after CLRLPIR: %d\n",
+                   ret);
         return;
     }
 
