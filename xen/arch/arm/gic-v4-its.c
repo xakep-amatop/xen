@@ -270,10 +270,15 @@ static void gicv4_vpe_db_proxy_unmap(struct its_vpe *vpe)
     if ( !gic_support_directLPI() )
     {
         unsigned long flags;
+        int ret;
 
         spin_lock_irqsave(&vpe_proxy.lock, flags);
-        gicv4_vpe_db_proxy_unmap_locked(vpe);
+        ret = gicv4_vpe_db_proxy_unmap_locked(vpe);
         spin_unlock_irqrestore(&vpe_proxy.lock, flags);
+
+        if ( ret )
+            printk(XENLOG_WARNING
+                   "ITS: failed to unmap GICv4 VPE proxy event: %d\n", ret);
     }
 }
 
@@ -524,11 +529,19 @@ static void its_vpe_send_inv_db(struct its_vpe *vpe)
     {
         struct its_device *dev = vpe_proxy.dev;
         unsigned long flags;
+        int ret;
 
         spin_lock_irqsave(&vpe_proxy.lock, flags);
-        gicv4_vpe_db_proxy_map_locked(vpe);
-        its_send_cmd_inv(dev->hw_its, dev->host_devid, vpe->vpe_proxy_event);
+        ret = gicv4_vpe_db_proxy_map_locked(vpe);
+        if ( !ret )
+            ret = its_send_cmd_inv(dev->hw_its, dev->host_devid,
+                                   vpe->vpe_proxy_event);
         spin_unlock_irqrestore(&vpe_proxy.lock, flags);
+
+        if ( ret )
+            printk(XENLOG_WARNING
+                   "ITS: failed to invalidate GICv4 VPE doorbell mapping: %d\n",
+                   ret);
     }
 }
 
