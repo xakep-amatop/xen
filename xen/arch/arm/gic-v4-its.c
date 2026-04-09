@@ -19,6 +19,7 @@
  */
 
 #include <xen/delay.h>
+#include <xen/err.h>
 #include <xen/errno.h>
 #include <xen/sched.h>
 #include <xen/spinlock.h>
@@ -347,10 +348,15 @@ int __init gicv4_init_vpe_proxy(void)
     /* Use the last possible DevID */
     devid = BIT(hw_its->devid_bits, UL) - 1;
     vpe_proxy.dev = its_create_device(hw_its, devid, nr_cpu_ids);
-    if ( !vpe_proxy.dev )
+    if ( IS_ERR(vpe_proxy.dev) )
     {
+        int ret = PTR_ERR(vpe_proxy.dev);
+
         printk(XENLOG_ERR "ITS: Can't allocate GICv4 VPE proxy device\n");
-        return -ENOMEM;
+        xfree(vpe_proxy.vpes);
+        vpe_proxy.vpes = NULL;
+        vpe_proxy.dev = NULL;
+        return ret;
     }
 
     spin_lock_init(&vpe_proxy.lock);
