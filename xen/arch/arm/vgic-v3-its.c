@@ -387,7 +387,8 @@ out_unlock:
  * property table and update the virtual IRQ's state in the given pending_irq.
  * Must be called with the respective VGIC VCPU lock held.
  */
-int update_lpi_property(struct domain *d, struct pending_irq *p, bool needs_inv)
+static int update_lpi_property(struct domain *d, struct pending_irq *p,
+                               bool needs_inv)
 {
     paddr_t addr;
     uint8_t property;
