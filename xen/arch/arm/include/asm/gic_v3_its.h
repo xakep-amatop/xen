@@ -295,8 +295,8 @@ int its_send_command(struct host_its *hw_its, const void *its_cmd);
 struct its_baser *its_get_baser(struct host_its *hw_its, uint32_t type);
 bool its_alloc_table_entry(struct its_baser *baser, uint32_t id);
 struct page_info *lpi_allocate_pendtable(void);
-void *lpi_allocate_proptable(void);
-void lpi_free_proptable(void *vproptable);
+void *lpi_allocate_vproptable(void);
+void lpi_free_vproptable(void *vproptable);
 uint64_t encode_rdbase(struct host_its *hw_its, unsigned int cpu, uint64_t reg);
 
 int gicv3_its_wait_commands(struct host_its *hw_its);

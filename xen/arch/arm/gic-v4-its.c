@@ -253,7 +253,7 @@ int vgic_v4_its_vm_init(struct domain *d)
         goto fail_vpes;
     d->arch.vgic.its_vm->nr_vpes = nr_vcpus;
 
-    d->arch.vgic.its_vm->vproptable = lpi_allocate_proptable();
+    d->arch.vgic.its_vm->vproptable = lpi_allocate_vproptable();
     if ( !d->arch.vgic.its_vm->vproptable )
         goto fail_vprop;
 
@@ -273,7 +273,7 @@ void vgic_v4_free_its_vm(struct domain *d)
     if ( its_vm->vpes )
         xfree(its_vm->vpes);
     if ( its_vm->vproptable )
-        lpi_free_proptable(its_vm);
+        lpi_free_vproptable(its_vm);
 }
 
 int vgic_v4_its_vpe_init(struct vcpu *vcpu)

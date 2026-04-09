@@ -60,6 +60,16 @@ static DEFINE_PER_CPU(struct lpi_redist_data, lpi_redist);
 #define HOST_LPIS_PER_PAGE      (PAGE_SIZE / sizeof(union host_lpi))
 uint32_t lpi_id_bits;
 
+static unsigned long lpi_get_vproptable_size(void)
+{
+    return MAX_NR_HOST_LPIS;
+}
+
+static unsigned int lpi_get_vproptable_order(void)
+{
+    return get_order_from_bytes(max(lpi_get_vproptable_size(), 1UL));
+}
+
 static union host_lpi *gic_get_host_lpi(uint32_t plpi)
 {
     union host_lpi *block;
@@ -286,13 +296,16 @@ static int gicv3_lpi_set_pendtable(void __iomem *rdist_base)
     return 0;
 }
 
-void *lpi_allocate_proptable(void)
+void *lpi_allocate_vproptable(void)
 {
+    unsigned long alloc_size;
     void *table;
-    int order;
+    unsigned int order;
 
-    /* The property table holds one byte per LPI. */
-    order = get_order_from_bytes(lpi_data.max_host_lpi_ids);
+    /* The virtual property table holds one byte per host LPI. */
+    order = lpi_get_vproptable_order();
+    alloc_size = PAGE_SIZE << order;
+
     table = alloc_xenheap_pages(order, gicv3_its_get_memflags());
     if ( !table )
         return NULL;
@@ -303,19 +316,18 @@ void *lpi_allocate_proptable(void)
         free_xenheap_pages(table, order);
         return NULL;
     }
-    memset(table, GIC_PRI_IRQ | LPI_PROP_RES1, MAX_NR_HOST_LPIS);
-    clean_and_invalidate_dcache_va_range(table, MAX_NR_HOST_LPIS);
+
+    memset(table, GIC_PRI_IRQ | LPI_PROP_RES1, alloc_size);
+    if ( gicv3_its_get_cacheability() <= GIC_BASER_CACHE_nC )
+        clean_and_invalidate_dcache_va_range(table, alloc_size);
 
     return table;
 }
 
-void lpi_free_proptable(void *vproptable)
+void lpi_free_vproptable(void *vproptable)
 {
-    int order;
-
-    /* The property table holds one byte per LPI. */
-    order = get_order_from_bytes(lpi_data.max_host_lpi_ids);
-    free_xenheap_pages(vproptable, order);
+    if ( vproptable )
+        free_xenheap_pages(vproptable, lpi_get_vproptable_order());
 }
 
 /*
