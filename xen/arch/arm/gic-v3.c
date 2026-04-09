@@ -1992,11 +1992,7 @@ static bool gic_dist_supports_lpis(void)
 #ifdef CONFIG_GICV4
 static void __init gicv4_init(void)
 {
-        gicv3_info.hw_version = GIC_V4;
-
-
     gicv4_its_vpeid_allocator_init();
-
 }
 #else
 static void __init gicv4_init(void)
@@ -2082,6 +2078,7 @@ static int __init gicv3_init(void)
         goto out;
 
     gicv3_hyp_init();
+    gicv3_info.hw_version = gic_is_gicv4() ? GIC_V4 : GIC_V3;
 
     if ( gic_is_gicv4() )
         gicv4_init();
