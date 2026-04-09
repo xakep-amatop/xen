@@ -118,8 +118,6 @@ static inline void gits_write_vpendbaser(uint64_t val, void __iomem *addr)
 #define gits_read_vpendbaser(c)     readq_relaxed(c)
 
 #define GICR_INVLPIR_INTID                GENMASK_ULL(31, 0)
-#define GICR_INVLPIR_VPEID                GICR_INVALLR_VPEID
-#define GICR_INVLPIR_V                    GICR_INVALLR_V
 
 #endif
 
