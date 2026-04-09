@@ -191,7 +191,7 @@ void gicv3_do_LPI(unsigned int lpi)
          * Update the pending_last flag that indicates that VLPIs are pending.
          * And the corresponding vcpu is also kicked into action.
          */
-        v->arch.vgic.its_vpe->pending_last = true;
+        write_atomic(&v->arch.vgic.its_vpe->pending_last, true);
 
         vcpu_kick(v);
 #else

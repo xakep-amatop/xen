@@ -965,7 +965,7 @@ static bool its_make_vpe_non_resident(struct its_vpe *vpe, unsigned int cpu)
         return false;
 
     vpe->idai = val & GICR_VPENDBASER_IDAI;
-    vpe->pending_last = val & GICR_VPENDBASER_PendingLast;
+    write_atomic(&vpe->pending_last, val & GICR_VPENDBASER_PendingLast);
 
     return true;
 }
