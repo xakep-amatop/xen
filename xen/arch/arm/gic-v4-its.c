@@ -342,6 +342,7 @@ int vgic_v4_its_vm_init(struct domain *d)
     if ( !d->arch.vgic.its_vm->vproptable )
         goto fail_vprop;
 
+    /* Xen assumes all host ITS instances agree on these attributes. */
     d->arch.vgic.its_vm->vpropbaser =
         virt_to_maddr(d->arch.vgic.its_vm->vproptable) & GENMASK(51, 12);
     d->arch.vgic.its_vm->vpropbaser |=
