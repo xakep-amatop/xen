@@ -62,6 +62,11 @@ bool gic_support_directLPI(void)
     return gicv4.has_direct_lpi;
 }
 
+bool gic_support_vlpis(void)
+{
+    return gicv4.has_vlpis;
+}
+
 bool gic_support_vptValidDirty(void)
 {
     return gicv4.has_vpend_valid_dirty;

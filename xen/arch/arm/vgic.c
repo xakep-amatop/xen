@@ -330,7 +330,7 @@ int domain_vgic_init(struct domain *d, unsigned int nr_spis)
     for ( i = 0; i < NR_GIC_SGI; i++ )
         set_bit(i, d->arch.vgic.allocated_irqs);
 
-    if ( gic_is_gicv4() )
+    if ( gic_support_vlpis() && gicv3_its_host_has_its() )
     {
         ret = vgic_v4_its_vm_init(d);
         if ( ret )
@@ -377,7 +377,7 @@ void domain_vgic_free(struct domain *d)
     xfree(d->arch.vgic.pending_irqs);
     xfree(d->arch.vgic.allocated_irqs);
 
-    if ( gic_is_gicv4() )
+    if ( gic_support_vlpis() && gicv3_its_host_has_its() )
         vgic_v4_free_its_vm(d);
 }
 
@@ -406,7 +406,7 @@ int vcpu_vgic_init(struct vcpu *v)
     INIT_LIST_HEAD(&v->arch.vgic.lr_pending);
     spin_lock_init(&v->arch.vgic.lock);
 
-    if ( gic_is_gicv4() && gicv3_its_host_has_its())
+    if ( gic_support_vlpis() && gicv3_its_host_has_its() )
     {
         ret = vgic_v4_its_vpe_init(v);
         if ( ret )
