@@ -543,11 +543,22 @@ static void its_vpe_send_inv_db(struct its_vpe *vpe)
 {
     if ( gic_support_directLPI() )
     {
-        unsigned int cpu = vpe->col_idx;
+        unsigned long flags;
+        unsigned int cpu;
         int ret;
+
+        /*
+         * Serialize register-based invalidation against VPE moves. The
+         * architecture makes overlapping INVLPIR and ITS commands that retarget
+         * the same doorbell CONSTRAINED UNPREDICTABLE, and vpe->col_idx is also
+         * updated under this lock.
+         */
+        cpu = vpe_to_cpuid_lock(vpe, &flags);
 
         /* Target the redistributor this VPE is currently known on */
         ret = direct_lpi_inv(vpe->vpe_db_lpi, cpu);
+        vpe_to_cpuid_unlock(vpe, &flags);
+
         if ( ret )
             printk(XENLOG_WARNING
                    "ITS: failed to invalidate GICv4 VPE doorbell via INVLPIR: %d\n",
@@ -1243,7 +1254,6 @@ static void gicv4_vpe_db_proxy_move(struct its_vpe *vpe, unsigned int from,
      * So each time we issue VMOVI, we VSYNC the old VPE for good measure.
      */
     WARN_ON(its_send_cmd_sync(vpe_proxy.dev->hw_its, from));
-
     spin_unlock_irqrestore(&vpe_proxy.lock, flags);
 }
 
