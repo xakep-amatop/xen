@@ -207,6 +207,7 @@ rollback:
 
     return ret;
 }
+
 static int its_vpe_init(struct its_vpe *vpe)
 {
     struct host_its *rollback_its;
@@ -368,21 +369,25 @@ int vgic_v4_its_vpe_init(struct vcpu *vcpu)
 {
     int ret;
     struct its_vm *its_vm = vcpu->domain->arch.vgic.its_vm;
+    struct its_vpe *vpe;
     unsigned int vcpuid = vcpu->vcpu_id;
 
-    vcpu->arch.vgic.its_vpe = xzalloc(struct its_vpe);
-    if ( !vcpu->arch.vgic.its_vpe )
+    vpe = xzalloc(struct its_vpe);
+    if ( !vpe )
         return -ENOMEM;
 
-    its_vm->vpes[vcpuid] = vcpu->arch.vgic.its_vpe;
-    vcpu->arch.vgic.its_vpe->its_vm = its_vm;
+    vpe->its_vm = its_vm;
+    vcpu->arch.vgic.its_vpe = vpe;
 
-    ret = its_vpe_init(vcpu->arch.vgic.its_vpe);
+    ret = its_vpe_init(vpe);
     if ( ret )
     {
-        its_vpe_teardown(vcpu->arch.vgic.its_vpe);
+        vgic_v4_its_vpe_free(vcpu);
         return ret;
     }
+
+    its_vm->vpes[vcpuid] = vpe;
+
     return 0;
 }
 
