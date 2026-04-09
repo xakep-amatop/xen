@@ -25,8 +25,10 @@
 	((typeof(_mask))(((_reg) & (_mask)) >> (ffs64(_mask) - 1)))
 #endif
 
+#ifndef FIELD_PREP
 #define FIELD_PREP(_mask, _val)			\
 	(((typeof(_mask))(_val) << (ffs64(_mask) - 1)) & (_mask))
+#endif
 /*
  * Additional registers defined in GIC v3.
  * Common GICD registers are defined in gic.h
