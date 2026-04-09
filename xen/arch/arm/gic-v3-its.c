@@ -646,6 +646,8 @@ static int gicv3_its_init_single_its(struct host_its *hw_its)
     gicv3_its_enable_quirks(hw_its);
 
     reg = readq_relaxed(hw_its->its_base + GITS_TYPER);
+    hw_its->is_v4 = ((readl_relaxed(hw_its->its_base + GITS_PIDR2) &
+                     GIC_PIDR2_ARCH_MASK) == GIC_PIDR2_ARCH_GICv4);
     hw_its->devid_bits = GITS_TYPER_DEVICE_ID_BITS(reg);
     hw_its->evid_bits = GITS_TYPER_EVENT_ID_BITS(reg);
     hw_its->itte_size = GITS_TYPER_ITT_SIZE(reg);
