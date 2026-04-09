@@ -51,6 +51,9 @@ static struct {
     int next_victim;
 } vpe_proxy;
 
+static int vpe_to_cpuid_lock(struct its_vpe *vpe, unsigned long *flags);
+static void vpe_to_cpuid_unlock(struct its_vpe *vpe, unsigned long *flags);
+
 void __init gicv4_its_vpeid_allocator_init(void)
 {
     /* Allocate space for vpeid_mask based on MAX_VPEID */
@@ -445,7 +448,6 @@ fail:
     return rc;
 }
 
-static void its_vpe_teardown(struct its_vpe *vpe)
 static int its_send_cmd_vmovp(struct its_vpe *vpe)
 {
     uint16_t vpeid = vpe->vpe_id;
