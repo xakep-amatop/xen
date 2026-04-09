@@ -44,7 +44,7 @@ void __init gicv4_its_vpeid_allocator_init(void)
         panic("Could not allocate VPEID bitmap space\n");
 }
 
-static int __init its_alloc_vpeid(struct its_vpe *vpe)
+static int its_alloc_vpeid(void)
 {
     int id;
 
@@ -67,7 +67,7 @@ out:
     return id;
 }
 
-static void __init its_free_vpeid(uint32_t vpe_id)
+static void its_free_vpeid(uint32_t vpe_id)
 {
     spin_lock(&vpeid_alloc_lock);
 
@@ -76,7 +76,7 @@ static void __init its_free_vpeid(uint32_t vpe_id)
     spin_unlock(&vpeid_alloc_lock);
 }
 
-static int __init its_alloc_vpe_entry(uint32_t vpe_id)
+static int its_alloc_vpe_entry(uint32_t vpe_id)
 {
     struct host_its *hw_its;
     int ret;
@@ -181,14 +181,14 @@ static int its_map_vpe(struct host_its *its, struct its_vpe *vpe)
 
     return 0;
 }
-static int __init its_vpe_init(struct its_vpe *vpe)
+static int its_vpe_init(struct its_vpe *vpe)
 {
     int vpe_id, rc = -ENOMEM;
     struct page_info *vpendtable;
     struct host_its *hw_its;
 
     /* Allocate vpe id */
-    vpe_id = its_alloc_vpeid(vpe);
+    vpe_id = its_alloc_vpeid();
     if ( vpe_id < 0 )
         return rc;
 
@@ -229,7 +229,7 @@ static int __init its_vpe_init(struct its_vpe *vpe)
     return rc;
 }
 
-static void __init its_vpe_teardown(struct its_vpe *vpe)
+static void its_vpe_teardown(struct its_vpe *vpe)
 {
     unsigned int order;
 
