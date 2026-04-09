@@ -76,9 +76,10 @@ static void __init its_free_vpeid(uint32_t vpe_id)
     spin_unlock(&vpeid_alloc_lock);
 }
 
-static bool __init its_alloc_vpe_entry(uint32_t vpe_id)
+static int __init its_alloc_vpe_entry(uint32_t vpe_id)
 {
     struct host_its *hw_its;
+    int ret;
 
     /*
      * Make sure the L2 tables are allocated on *all* v4 ITSs. We
@@ -95,13 +96,14 @@ static bool __init its_alloc_vpe_entry(uint32_t vpe_id)
 
         baser = its_get_baser(hw_its, GITS_BASER_TYPE_VCPU);
         if ( !baser )
-            return false;
+            return -ENODEV;
 
-        if ( !its_alloc_table_entry(baser, vpe_id) )
-            return false;
+        ret = its_alloc_table_entry(baser, vpe_id);
+        if ( ret )
+            return ret;
     }
 
-    return true;
+    return 0;
 }
 
 static int its_send_cmd_vsync(struct host_its *its, uint16_t vpeid)
@@ -196,7 +198,8 @@ static int __init its_vpe_init(struct its_vpe *vpe)
     if ( !vpendtable )
         goto fail_vpt;
 
-    if ( !its_alloc_vpe_entry(vpe_id) )
+    rc = its_alloc_vpe_entry(vpe_id);
+    if ( rc )
         goto fail_entry;
 
     rwlock_init(&vpe->lock);

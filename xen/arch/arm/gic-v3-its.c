@@ -367,6 +367,14 @@ static bool check_baser_phys_addr(void *vaddr, unsigned int page_bits)
     return (!(paddr & ~GENMASK(page_bits < 16 ? 47 : 51, page_bits)));
 }
 
+/* Check that the physical address can be encoded in a L1 entry. */
+static bool check_l1_phys_addr(void *vaddr, unsigned int page_size)
+{
+    paddr_t paddr = virt_to_maddr(vaddr);
+
+    return !(paddr & ~GENMASK(51, fls(page_size - 1)));
+}
+
 static uint64_t encode_baser_phys_addr(paddr_t addr, unsigned int page_bits)
 {
     uint64_t ret = addr & GENMASK(47, page_bits);
@@ -444,7 +452,7 @@ struct its_baser *its_get_baser(struct host_its *hw_its, uint32_t type)
     return NULL;
 }
 
-bool its_alloc_table_entry(struct its_baser *baser, uint32_t id)
+int its_alloc_table_entry(struct its_baser *baser, uint32_t id)
 {
     uint64_t reg = baser->val;
     bool indirect = reg & GITS_BASER_INDIRECT;
@@ -454,31 +462,43 @@ bool its_alloc_table_entry(struct its_baser *baser, uint32_t id)
 
     /* Don't allow id that exceeds single, flat table limit */
     if ( !indirect )
-        return (id < (baser->table_size / entry_size));
+        return (id < (baser->table_size / entry_size)) ? 0 : -ERANGE;
 
     /* Compute 1st level table index & check if that exceeds table limit */
     idx = id / (baser->pagesz / entry_size);
     if ( idx >= (baser->pagesz / GITS_LVL1_ENTRY_SIZE) )
-        return false;
+        return -ERANGE;
 
     table = baser->base;
 
     /* Allocate memory for 2nd level table */
-    if (!table[idx])
+    if ( !table[idx] )
     {
+        paddr_t addr;
         unsigned int page_size = baser->pagesz;
+        unsigned int order = get_order_from_bytes(page_size);
         void *buffer;
 
-        buffer = alloc_xenheap_pages(get_order_from_bytes(page_size),
-                                     gicv3_its_get_memflags());
+        buffer = alloc_xenheap_pages(order, gicv3_its_get_memflags());
         if ( !buffer )
             return -ENOMEM;
+
+        memset(buffer, 0, PAGE_SIZE << order);
+
+        addr = virt_to_maddr(buffer);
+        if ( !check_l1_phys_addr(buffer, page_size) )
+        {
+            free_xenheap_pages(buffer, order);
+            return -ERANGE;
+        }
+
+        /* These second-level tables stay around for the ITS lifetime. */
 
         /* Flush Lvl2 table to PoC if hw doesn't support coherency */
         if ( gicv3_its_get_cacheability() <= GIC_BASER_CACHE_nC )
             clean_and_invalidate_dcache_va_range(buffer, page_size);
 
-        table[idx] = cpu_to_le64(virt_to_maddr(buffer) | GITS_VALID_BIT);
+        table[idx] = cpu_to_le64(addr | GITS_VALID_BIT);
 
         /* Flush Lvl1 entry to PoC if hw doesn't support coherency */
         if ( gicv3_its_get_cacheability() <= GIC_BASER_CACHE_nC )
@@ -489,7 +509,7 @@ bool its_alloc_table_entry(struct its_baser *baser, uint32_t id)
         dsb(sy);
     }
 
-    return true;
+    return 0;
 }
 
 static int its_map_baser(void __iomem *basereg, uint64_t regc,

@@ -293,7 +293,7 @@ int its_send_cmd_discard(struct host_its *its, struct its_device *dev,
 int its_send_command(struct host_its *hw_its, const void *its_cmd);
 
 struct its_baser *its_get_baser(struct host_its *hw_its, uint32_t type);
-bool its_alloc_table_entry(struct its_baser *baser, uint32_t id);
+int its_alloc_table_entry(struct its_baser *baser, uint32_t id);
 struct page_info *lpi_allocate_pendtable(void);
 void *lpi_allocate_vproptable(void);
 void lpi_free_vproptable(void *vproptable);
