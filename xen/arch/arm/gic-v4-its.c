@@ -842,6 +842,8 @@ void vgic_v4_load(struct vcpu *vcpu)
 {
     struct its_vpe *vpe = vcpu->arch.vgic.its_vpe;
 
+    if ( !vpe )
+        return;
 
     if ( vpe->resident )
         return;
@@ -853,6 +855,9 @@ void vgic_v4_load(struct vcpu *vcpu)
 void vgic_v4_put(struct vcpu *vcpu, bool need_db)
 {
     struct its_vpe *vpe = vcpu->arch.vgic.its_vpe;
+
+    if ( !vpe )
+        return;
 
     if ( !vpe->resident )
         return;
