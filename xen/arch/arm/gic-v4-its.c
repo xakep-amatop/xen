@@ -33,6 +33,7 @@
  * Using a bitmap here limits us to 65536 concurrent VPEs.
  */
 #define INVALID_VPEID (~0U)
+#define GICR_VPENDBASER_DIRTY_POLL_TIMEOUT_US 100000U
 
 static unsigned long *vpeid_mask;
 
@@ -776,7 +777,7 @@ static void its_wait_vpt_parse_complete(void __iomem *vlpi_base)
 
 static bool its_clear_vpend_valid(void __iomem *vlpi_base, uint64_t *val)
 {
-    unsigned int count = 1000000;    /* 1s! */
+    unsigned int count = GICR_VPENDBASER_DIRTY_POLL_TIMEOUT_US;
 
     if ( !gits_clear_vpendbaser_valid(vlpi_base + GICR_VPENDBASER) )
         return false;
