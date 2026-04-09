@@ -8,6 +8,7 @@
  */
 
 #include <xen/acpi.h>
+#include <xen/err.h>
 #include <xen/lib.h>
 #include <xen/delay.h>
 #include <xen/iocap.h>
@@ -452,6 +453,8 @@ struct its_baser *its_get_baser(struct host_its *hw_its, uint32_t type)
     return NULL;
 }
 
+static void its_free_device(struct its_device *dev);
+
 int its_alloc_table_entry(struct its_baser *baser, uint32_t id)
 {
     uint64_t reg = baser->val;
@@ -804,13 +807,13 @@ static int gicv3_its_map_host_events(struct host_its *its,
     return 0;
 }
 
-static bool its_alloc_device_table(struct host_its *hw_its, uint32_t dev_id)
+static int its_alloc_device_table(struct host_its *hw_its, uint32_t dev_id)
 {
     struct its_baser *baser;
 
     baser = its_get_baser(hw_its, GITS_BASER_TYPE_DEVICE);
     if ( !baser )
-        return false;
+        return -ENODEV;
 
     return its_alloc_table_entry(baser, dev_id);
 }
@@ -820,32 +823,46 @@ struct its_device *its_create_device(struct host_its *hw_its,
 {
     void *itt_addr = NULL;
     struct its_device *dev = NULL;
+    paddr_t itt_addr_pa;
     int ret;
 
     /* Sanitise the provided hardware values against the host ITS. */
     if ( host_devid >= BIT(hw_its->devid_bits, UL) )
-        return NULL;
+        return ERR_PTR(-EINVAL);
 
     dev = xzalloc(struct its_device);
     if ( !dev )
-        return NULL;
+        return ERR_PTR(-ENOMEM);
 
     /* An Interrupt Translation Table needs to be 256-byte aligned. */
-    dev->itt_order = get_order_from_bytes(nr_events * hw_its->itte_size);
+    dev->itt_order = get_order_from_bytes(max(nr_events * hw_its->itte_size,
+                                              256UL));
     itt_addr = alloc_xenheap_pages(dev->itt_order, gicv3_its_get_memflags());
     if ( !itt_addr )
+    {
+        ret = -ENOMEM;
         goto fail_dev;
+    }
+
+    memset(itt_addr, 0, PAGE_SIZE << dev->itt_order);
+
+    itt_addr_pa = virt_to_maddr(itt_addr);
+    if ( itt_addr_pa & ~GENMASK(51, 8) )
+    {
+        ret = -ERANGE;
+        goto fail_itt;
+    }
 
     if ( gicv3_its_get_cacheability() <= GIC_BASER_CACHE_nC )
         clean_and_invalidate_dcache_va_range(itt_addr,
-                                             nr_events * hw_its->itte_size);
+                                             PAGE_SIZE << dev->itt_order);
 
-
-    if ( !its_alloc_device_table(hw_its, host_devid) )
+    ret = its_alloc_device_table(hw_its, host_devid);
+    if ( ret )
         goto fail_itt;
 
     ret = its_send_cmd_mapd(hw_its, host_devid, max(fls(nr_events - 1), 1U),
-                            virt_to_maddr(itt_addr), true);
+                            itt_addr_pa, true);
     if ( ret )
         goto fail_itt;
 
@@ -861,7 +878,7 @@ fail_itt:
 fail_dev:
     xfree(dev);
 
-    return NULL;
+    return ERR_PTR(ret);
 }
 
 static void its_free_device(struct its_device *dev)
@@ -956,9 +973,14 @@ int gicv3_its_map_guest_device(struct domain *d,
     if ( !valid )
         goto out_unlock;
 
+    ret = -ENOMEM;
     dev = its_create_device(hw_its, host_devid, nr_events);
-    if ( !dev )
+    if ( IS_ERR(dev) )
+    {
+        ret = PTR_ERR(dev);
+        dev = NULL;
         goto out_unlock;
+    }
 
     ret = -ENOMEM;
 
@@ -1010,19 +1032,16 @@ int gicv3_its_map_guest_device(struct domain *d,
 
     if ( ret )
     {
-        /* Clean up all allocated host LPI blocks. */
-        for ( ; i >= 0; i-- )
-        {
-            if ( dev->host_lpi_blocks[i] )
-                gicv3_free_host_lpi_block(dev->host_lpi_blocks[i]);
-        }
+        int unmap_ret;
 
         /*
          * Unmapping the device will discard all LPIs mapped so far.
          * We are already on the failing path, so no error checking to
          * not mask the original error value. This should never fail anyway.
          */
-        its_send_cmd_mapd(hw_its, host_devid, 0, 0, false);
+        unmap_ret = its_send_cmd_mapd(hw_its, host_devid, 0, 0, false);
+        if ( !unmap_ret )
+            (void)gicv3_its_wait_commands(hw_its);
 
         goto out;
     }
