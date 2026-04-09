@@ -336,8 +336,6 @@ int gicv4_its_vlpi_move(struct pending_irq *pirq, struct vcpu *vcpu);
 int gicv4_its_vlpi_unmap(struct pending_irq *pirq);
 int its_vlpi_prop_update(struct pending_irq *pirq, uint8_t property,
                          bool needs_inv);
-int direct_lpi_inv(struct its_device *dev, uint32_t eventid,
-                   uint32_t db_lpi, unsigned int cpu);
 
 bool event_is_forwarded_to_vcpu(struct its_device *dev, uint32_t eventid);
 void its_vpe_mask_db(struct its_vpe *vpe);

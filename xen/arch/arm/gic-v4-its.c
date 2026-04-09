@@ -519,8 +519,7 @@ static int wait_for_syncr(void __iomem *rdbase, const char *what)
     return 0;
 }
 
-int direct_lpi_inv(struct its_device *dev, uint32_t eventid,
-                   uint32_t db_lpi, unsigned int cpu)
+static int direct_lpi_inv(uint32_t db_lpi, unsigned int cpu)
 {
     void __iomem *rdbase;
     uint64_t val;
@@ -548,7 +547,7 @@ static void its_vpe_send_inv_db(struct its_vpe *vpe)
         int ret;
 
         /* Target the redistributor this VPE is currently known on */
-        ret = direct_lpi_inv(NULL, 0, vpe->vpe_db_lpi, cpu);
+        ret = direct_lpi_inv(vpe->vpe_db_lpi, cpu);
         if ( ret )
             printk(XENLOG_WARNING
                    "ITS: failed to invalidate GICv4 VPE doorbell via INVLPIR: %d\n",
