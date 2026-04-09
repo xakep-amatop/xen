@@ -31,6 +31,8 @@
  * VPE ID is at most 16 bits.
  * Using a bitmap here limits us to 65536 concurrent VPEs.
  */
+#define INVALID_VPEID (~0U)
+
 static unsigned long *vpeid_mask;
 
 static spinlock_t vpeid_alloc_lock = SPIN_LOCK_UNLOCKED;
@@ -159,6 +161,21 @@ static int its_send_cmd_vinvall(struct host_its *its, struct its_vpe *vpe)
     return its_send_command(its, cmd);
 }
 
+static int its_unmap_vpe(struct host_its *its, struct its_vpe *vpe)
+{
+    int ret;
+
+    ret = its_send_cmd_vmapp(its, vpe, false);
+    if ( ret )
+        return ret;
+
+    ret = its_send_cmd_vsync(its, vpe->vpe_id);
+    if ( ret )
+        return ret;
+
+    return gicv3_its_wait_commands(its);
+}
+
 static int its_map_vpe(struct host_its *its, struct its_vpe *vpe)
 {
     int ret;
@@ -173,38 +190,55 @@ static int its_map_vpe(struct host_its *its, struct its_vpe *vpe)
 
     ret = its_send_cmd_vinvall(its, vpe);
     if ( ret )
-        return ret;
+        goto rollback;
 
     ret = its_send_cmd_vsync(its, vpe->vpe_id);
     if ( ret )
-        return ret;
+        goto rollback;
+
+    ret = gicv3_its_wait_commands(its);
+    if ( ret )
+        goto rollback;
 
     return 0;
+
+rollback:
+    (void)its_unmap_vpe(its, vpe);
+
+    return ret;
 }
 static int its_vpe_init(struct its_vpe *vpe)
 {
-    int vpe_id, rc = -ENOMEM;
+    struct host_its *rollback_its;
     struct page_info *vpendtable;
     struct host_its *hw_its;
+    int rc;
+
+    vpe->vpe_id = INVALID_VPEID;
 
     /* Allocate vpe id */
-    vpe_id = its_alloc_vpeid();
-    if ( vpe_id < 0 )
+    rc = its_alloc_vpeid();
+    if ( rc < 0 )
         return rc;
+
+    vpe->vpe_id = rc;
 
     /* Allocate VPT */
     vpendtable = lpi_allocate_pendtable();
 
     if ( !vpendtable )
-        goto fail_vpt;
+    {
+        rc = -ENOMEM;
+        goto fail;
+    }
 
-    rc = its_alloc_vpe_entry(vpe_id);
+    vpe->vpendtable = page_to_virt(vpendtable);
+
+    rc = its_alloc_vpe_entry(vpe->vpe_id);
     if ( rc )
-        goto fail_entry;
+        goto fail;
 
     rwlock_init(&vpe->lock);
-    vpe->vpe_id = vpe_id;
-    vpe->vpendtable = page_to_virt(vpendtable);
     /*
      * We eagerly inform all the v4 ITS and map vPE to the first
      * possible CPU
@@ -215,27 +249,57 @@ static int its_vpe_init(struct its_vpe *vpe)
         if ( !hw_its->is_v4 )
             continue;
 
-        if ( its_map_vpe(hw_its, vpe) )
-            goto fail_entry;
+        rc = its_map_vpe(hw_its, vpe);
+        if ( rc )
+            goto fail_unmap;
     }
+
+    vpe->resident = true;
 
     return 0;
 
- fail_entry:
-    xfree(page_to_virt(vpendtable));
- fail_vpt:
-    its_free_vpeid(vpe_id);
+fail_unmap:
+    list_for_each_entry(rollback_its, &host_its_list, entry)
+    {
+        if ( rollback_its == hw_its )
+            break;
+
+        if ( rollback_its->is_v4 )
+            (void)its_unmap_vpe(rollback_its, vpe);
+    }
+
+fail:
 
     return rc;
 }
 
 static void its_vpe_teardown(struct its_vpe *vpe)
 {
+    struct host_its *hw_its;
     unsigned int order;
 
+    if ( !vpe )
+        return;
+
     order = get_order_from_bytes(max(lpi_data.max_host_lpi_ids / 8, (unsigned long)SZ_64K));
-    its_free_vpeid(vpe->vpe_id);
-    free_xenheap_pages(vpe->vpendtable, order);
+
+    if ( vpe->resident )
+    {
+        list_for_each_entry(hw_its, &host_its_list, entry)
+        {
+            if ( hw_its->is_v4 )
+                (void)its_unmap_vpe(hw_its, vpe);
+        }
+
+        vpe->resident = false;
+    }
+
+    if ( vpe->vpe_id != INVALID_VPEID )
+        its_free_vpeid(vpe->vpe_id);
+
+    if ( vpe->vpendtable )
+        free_xenheap_pages(vpe->vpendtable, order);
+
     xfree(vpe);
 }
 
