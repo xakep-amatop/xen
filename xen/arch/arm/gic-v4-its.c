@@ -329,8 +329,13 @@ int __init gicv4_init_vpe_proxy(void)
         return 0;
     }
 
-    /* Any ITS will do, even if not v4 */
-    hw_its = list_first_entry(&host_its_list, struct host_its, entry);
+    /* Any ITS will do, even if not v4. */
+    hw_its = list_first_entry_or_null(&host_its_list, struct host_its, entry);
+    if ( !hw_its )
+    {
+        printk(XENLOG_ERR "ITS: No host ITS available for VPE proxy device\n");
+        return -ENODEV;
+    }
 
     vpe_proxy.vpes = xzalloc_array(struct its_vpe *, nr_cpu_ids);
     if ( !vpe_proxy.vpes )
