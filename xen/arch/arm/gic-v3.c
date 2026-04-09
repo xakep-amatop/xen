@@ -124,7 +124,6 @@ static void __init gicv4_update_lpi_properties(void __iomem *ptr)
 DEFINE_PER_CPU(void __iomem*, rbase);
 
 #define GICD                   (gicv3.map_dbase)
-#define GICD_RDIST_BASE        (this_cpu(rbase))
 #define GICD_RDIST_SGI_BASE    (GICD_RDIST_BASE + SZ_64K)
 
 /*
