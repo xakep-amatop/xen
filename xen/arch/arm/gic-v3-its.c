@@ -706,14 +706,10 @@ static int gicv3_its_init_single_its(struct host_its *hw_its)
 static int remove_mapped_guest_device(struct its_device *dev)
 {
     int ret = 0;
-    unsigned int i;
 
     if ( dev->hw_its )
         /* MAPD also discards all events with this device ID. */
         ret = its_send_cmd_mapd(dev->hw_its, dev->host_devid, 0, 0, false);
-
-    for ( i = 0; i < dev->eventids / LPI_BLOCK; i++ )
-        gicv3_free_host_lpi_block(dev->host_lpi_blocks[i]);
 
     /* Make sure the MAPD command above is really executed. */
     if ( !ret )
@@ -724,10 +720,7 @@ static int remove_mapped_guest_device(struct its_device *dev)
         printk(XENLOG_WARNING "Can't unmap host ITS device 0x%x\n",
                dev->host_devid);
 
-    free_xenheap_pages(dev->itt_addr, dev->itt_order);
-    xfree(dev->pend_irqs);
-    xfree(dev->host_lpi_blocks);
-    xfree(dev);
+    its_free_device(dev);
 
     return 0;
 }
@@ -841,8 +834,9 @@ struct its_device *its_create_device(struct host_its *hw_its,
     if ( !itt_addr )
         goto fail_dev;
 
-    clean_and_invalidate_dcache_va_range(itt_addr,
-                                         nr_events * hw_its->itte_size);
+    if ( gicv3_its_get_cacheability() <= GIC_BASER_CACHE_nC )
+        clean_and_invalidate_dcache_va_range(itt_addr,
+                                             nr_events * hw_its->itte_size);
 
 
     if ( !its_alloc_device_table(hw_its, host_devid) )
@@ -870,10 +864,18 @@ fail_dev:
 
 static void its_free_device(struct its_device *dev)
 {
+    unsigned int i;
+
+    if ( dev->host_lpi_blocks )
+        for ( i = 0; i < dev->eventids / LPI_BLOCK; i++ )
+            if ( dev->host_lpi_blocks[i] )
+                gicv3_free_host_lpi_block(dev->host_lpi_blocks[i]);
+
+    if ( dev->itt_addr )
+        free_xenheap_pages(dev->itt_addr, dev->itt_order);
+
     xfree(dev->host_lpi_blocks);
-    xfree(dev->itt_addr);
-    if ( dev->pend_irqs )
-        xfree(dev->pend_irqs);
+    xfree(dev->pend_irqs);
     xfree(dev);
 }
 
