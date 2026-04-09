@@ -292,6 +292,7 @@ static void gicv4_vpe_db_proxy_unmap(struct its_vpe *vpe)
  */
 static int gicv4_vpe_db_proxy_map_locked(struct its_vpe *vpe)
 {
+    unsigned int eventid;
     int ret;
 
     /* Already mapped? */
@@ -299,24 +300,28 @@ static int gicv4_vpe_db_proxy_map_locked(struct its_vpe *vpe)
         return 0;
 
     /* This slot was already allocated. Kick the other VPE out. */
-    if ( vpe_proxy.vpes[vpe_proxy.next_victim] )
+    eventid = vpe_proxy.next_victim;
+
+    if ( vpe_proxy.vpes[eventid] )
     {
-        struct its_vpe *old_vpe = vpe_proxy.vpes[vpe_proxy.next_victim];
+        struct its_vpe *old_vpe = vpe_proxy.vpes[eventid];
 
         ret = gicv4_vpe_db_proxy_unmap_locked(old_vpe);
         if ( ret )
             return ret;
     }
 
-    /* Map the new VPE instead */
-    vpe_proxy.vpes[vpe_proxy.next_victim] = vpe;
-    vpe->vpe_proxy_event = vpe_proxy.next_victim;
-    vpe_proxy.next_victim = (vpe_proxy.next_victim + 1) %
-                            vpe_proxy.dev->eventids;
+    ret = its_send_cmd_mapti(vpe_proxy.dev->hw_its, vpe_proxy.dev->host_devid,
+                             eventid, vpe->vpe_db_lpi, vpe->col_idx);
+    if ( ret )
+        return ret;
 
-    return its_send_cmd_mapti(vpe_proxy.dev->hw_its, vpe_proxy.dev->host_devid,
-                              vpe->vpe_proxy_event, vpe->vpe_db_lpi,
-                              vpe->col_idx);
+    /* Commit the software state only after the ITS accepted the mapping. */
+    vpe_proxy.vpes[eventid] = vpe;
+    vpe->vpe_proxy_event = eventid;
+    vpe_proxy.next_victim = (eventid + 1) % vpe_proxy.dev->eventids;
+
+    return 0;
 }
 
 int __init gicv4_init_vpe_proxy(void)
