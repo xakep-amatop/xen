@@ -342,6 +342,17 @@ int vgic_v4_its_vm_init(struct domain *d)
     if ( !d->arch.vgic.its_vm->vproptable )
         goto fail_vprop;
 
+    d->arch.vgic.its_vm->vpropbaser =
+        virt_to_maddr(d->arch.vgic.its_vm->vproptable) & GENMASK(51, 12);
+    d->arch.vgic.its_vm->vpropbaser |=
+        gicv3_its_get_cacheability() << GICR_VPROPBASER_INNER_CACHEABILITY_SHIFT;
+    d->arch.vgic.its_vm->vpropbaser |=
+        gicv3_its_get_shareability() << GICR_VPROPBASER_SHAREABILITY_SHIFT;
+    d->arch.vgic.its_vm->vpropbaser |=
+        GIC_BASER_CACHE_SameAsInner << GICR_VPROPBASER_OUTER_CACHEABILITY_SHIFT;
+    d->arch.vgic.its_vm->vpropbaser |=
+        (HOST_LPIS_NRBITS - 1) & GICR_VPROPBASER_IDBITS_MASK;
+
     return 0;
 
 fail_vprop:
@@ -793,12 +804,8 @@ static void its_make_vpe_resident(struct its_vpe *vpe, unsigned int cpu)
     uint64_t val;
 
     /* Switch in this VM's virtual property table. */
-    val  = virt_to_maddr(vpe->its_vm->vproptable) & GENMASK(51, 12);
-    val |= gicv3_its_get_cacheability() << GICR_VPROPBASER_INNER_CACHEABILITY_SHIFT;
-    val |= gicv3_its_get_shareability() << GICR_VPROPBASER_SHAREABILITY_SHIFT;
-    val |= GIC_BASER_CACHE_SameAsInner << GICR_VPROPBASER_OUTER_CACHEABILITY_SHIFT;
-    val |= (HOST_LPIS_NRBITS - 1) & GICR_VPROPBASER_IDBITS_MASK;
-    gits_write_vpropbaser(val, vlpi_base + GICR_VPROPBASER);
+    gits_write_vpropbaser(vpe->its_vm->vpropbaser,
+                          vlpi_base + GICR_VPROPBASER);
 
     /* Switch in this VCPU's VPT. */
     val  = virt_to_maddr(vpe->vpendtable) & GENMASK(51, 16);

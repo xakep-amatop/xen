@@ -156,6 +156,7 @@ struct its_vm {
     unsigned int nr_db_lpis;
     /* Property table per VM. */
     void *vproptable;
+    uint64_t vpropbaser;
 };
 
 struct its_vpe {
