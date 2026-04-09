@@ -421,6 +421,9 @@ int vcpu_vgic_init(struct vcpu *v)
 
 void vcpu_vgic_free(struct vcpu *v)
 {
+    if ( gic_support_vlpis() && gicv3_its_host_has_its() )
+        vgic_v4_its_vpe_free(v);
+
     XFREE(v->arch.vgic.pending_irqs);
     XFREE(v->arch.vgic.private_irqs);
 }

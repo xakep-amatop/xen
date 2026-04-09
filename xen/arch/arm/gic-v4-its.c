@@ -349,6 +349,21 @@ void vgic_v4_free_its_vm(struct domain *d)
     d->arch.vgic.its_vm = NULL;
 }
 
+void vgic_v4_its_vpe_free(struct vcpu *vcpu)
+{
+    struct its_vm *its_vm = vcpu->domain->arch.vgic.its_vm;
+    struct its_vpe *vpe = vcpu->arch.vgic.its_vpe;
+
+    if ( !vpe )
+        return;
+
+    if ( its_vm && vcpu->vcpu_id < its_vm->nr_vpes )
+        its_vm->vpes[vcpu->vcpu_id] = NULL;
+
+    its_vpe_teardown(vpe);
+    vcpu->arch.vgic.its_vpe = NULL;
+}
+
 int vgic_v4_its_vpe_init(struct vcpu *vcpu)
 {
     int ret;
