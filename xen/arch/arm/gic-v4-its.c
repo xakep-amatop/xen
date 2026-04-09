@@ -162,8 +162,9 @@ static int its_send_cmd_vmapp(struct host_its *its, struct its_vpe *vpe,
     cmd[3] = (vpt_addr & GENMASK(51, 16)) |
              ((HOST_LPIS_NRBITS - 1) & GENMASK(4, 0));
 
-    /* Default doorbell interrupt */
-    cmd[1] |= (uint64_t)vpe->vpe_db_lpi;
+    /* GICv4.1 adds the VMAPP doorbell pINTID field. */
+    if ( gic_has_v4_1_extension() )
+        cmd[1] |= (uint64_t)vpe->vpe_db_lpi;
 
  out:
     ret = its_send_command(its, cmd);
