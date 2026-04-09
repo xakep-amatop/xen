@@ -330,6 +330,7 @@ fail_vprop:
     xfree(d->arch.vgic.its_vm->vpes);
  fail_vpes:
     xfree(d->arch.vgic.its_vm);
+    d->arch.vgic.its_vm = NULL;
 
     return ret;
 }
@@ -337,10 +338,15 @@ fail_vprop:
 void vgic_v4_free_its_vm(struct domain *d)
 {
     struct its_vm *its_vm = d->arch.vgic.its_vm;
-    if ( its_vm->vpes )
-        xfree(its_vm->vpes);
-    if ( its_vm->vproptable )
-        lpi_free_vproptable(its_vm);
+
+    if ( !its_vm )
+        return;
+
+    xfree(its_vm->vpes);
+    xfree(its_vm->db_lpi_bases);
+    lpi_free_vproptable(its_vm->vproptable);
+    xfree(its_vm);
+    d->arch.vgic.its_vm = NULL;
 }
 
 int vgic_v4_its_vpe_init(struct vcpu *vcpu)
