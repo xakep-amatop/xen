@@ -1205,15 +1205,15 @@ static void vpe_to_cpuid_unlock(struct its_vpe *vpe, unsigned long *flags)
     spin_unlock_irqrestore(&vpe->vpe_lock, *flags);
 }
 
-static void gicv4_vpe_db_proxy_move(struct its_vpe *vpe, unsigned int from,
-                                    unsigned int to)
+static int gicv4_vpe_db_proxy_move(struct its_vpe *vpe, unsigned int from,
+                                   unsigned int to)
 {
     unsigned long flags;
+    int ret;
 
     if ( gic_support_directLPI() )
     {
         void __iomem *rdbase;
-        int ret;
 
         rdbase = per_cpu(rbase, from);
 
@@ -1223,7 +1223,7 @@ static void gicv4_vpe_db_proxy_move(struct its_vpe *vpe, unsigned int from,
             printk(XENLOG_WARNING
                    "ITS: failed to wait for GICR_SYNCR.Busy before CLRLPIR: %d\n",
                    ret);
-            return;
+            return 0;
         }
 
         /* Clear potential pending state on the old redistributor */
@@ -1234,16 +1234,20 @@ static void gicv4_vpe_db_proxy_move(struct its_vpe *vpe, unsigned int from,
             printk(XENLOG_WARNING
                    "ITS: failed to wait for GICR_SYNCR.Busy after CLRLPIR: %d\n",
                    ret);
-        return;
+        return 0;
     }
 
     spin_lock_irqsave(&vpe_proxy.lock, flags);
 
-    gicv4_vpe_db_proxy_map_locked(vpe);
+    ret = gicv4_vpe_db_proxy_map_locked(vpe);
+    if ( ret )
+        goto out;
 
     /* MOVI instructs the appropriate Redistributor to move the pending state */
-    its_send_cmd_movi(vpe_proxy.dev->hw_its, vpe_proxy.dev->host_devid,
-                      vpe->vpe_proxy_event, to);
+    ret = its_send_cmd_movi(vpe_proxy.dev->hw_its, vpe_proxy.dev->host_devid,
+                            vpe->vpe_proxy_event, to);
+    if ( ret )
+        goto out;
 
     /*
      * ARM spec says that If, after using MOVI to move an interrupt from
@@ -1253,8 +1257,11 @@ static void gicv4_vpe_db_proxy_move(struct its_vpe *vpe, unsigned int from,
      * ensure correct behavior.
      * So each time we issue VMOVI, we VSYNC the old VPE for good measure.
      */
-    WARN_ON(its_send_cmd_sync(vpe_proxy.dev->hw_its, from));
+    ret = its_send_cmd_sync(vpe_proxy.dev->hw_its, from);
+
+ out:
     spin_unlock_irqrestore(&vpe_proxy.lock, flags);
+    return ret;
 }
 
 static int gicv4_vpe_set_affinity(struct vcpu *vcpu)
@@ -1286,7 +1293,7 @@ static int gicv4_vpe_set_affinity(struct vcpu *vcpu)
     ret = its_send_cmd_vmovp(vpe);
     if ( ret )
         goto out;
-    gicv4_vpe_db_proxy_move(vpe, from, to);
+    ret = gicv4_vpe_db_proxy_move(vpe, from, to);
 
  out:
     vpe_to_cpuid_unlock(vpe, &flags);
