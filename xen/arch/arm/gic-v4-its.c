@@ -464,8 +464,8 @@ int vgic_v4_its_vm_init(struct domain *d)
     return 0;
 
 fail_db:
-    while ( --i >= 0 )
-        gicv3_free_host_lpi_block(db_lpi_bases[i]);
+    while ( i != 0 )
+        gicv3_free_host_lpi_block(db_lpi_bases[--i]);
     xfree(db_lpi_bases);
 fail_db_bases:
     lpi_free_vproptable(d->arch.vgic.its_vm->vproptable);
