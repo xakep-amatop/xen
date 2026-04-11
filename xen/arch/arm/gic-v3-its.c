@@ -1075,10 +1075,10 @@ int gicv3_its_map_guest_device(struct domain *d,
     dev->guest_doorbell = guest_doorbell;
     dev->guest_devid = guest_devid;
 
-    #ifdef CONFIG_GICV4
-       spin_lock_init(&dev->event_map.vlpi_lock);
-       dev->event_map.nr_lpis = nr_events;
-    #endif
+#ifdef CONFIG_GICV4
+    spin_lock_init(&dev->event_map.vlpi_lock);
+    dev->event_map.nr_lpis = nr_events;
+#endif
 
     rb_link_node(&dev->rbnode, parent, new);
     rb_insert_color(&dev->rbnode, &d->arch.vgic.its_devices);

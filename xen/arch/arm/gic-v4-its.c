@@ -1069,6 +1069,9 @@ int gicv4_its_vlpi_move(struct pending_irq *pirq, struct vcpu *vcpu)
 {
     struct its_vlpi_map *map = pirq->vlpi_map;
     struct its_device *dev;
+    struct its_vlpi_map *live_map;
+    struct its_vlpi_map new_map;
+    int ret;
 
     if ( !map )
         return -EINVAL;
@@ -1078,8 +1081,21 @@ int gicv4_its_vlpi_move(struct pending_irq *pirq, struct vcpu *vcpu)
     if ( !dev->event_map.vm )
         return -EINVAL;
 
-    map->vpe_idx = vcpu->vcpu_id;
-    return gicv4_its_vlpi_map(map);
+    new_map = *map;
+    new_map.vpe_idx = vcpu->vcpu_id;
+
+    ret = gicv4_its_vlpi_map(&new_map);
+
+    spin_lock(&dev->event_map.vlpi_lock);
+    live_map = dev->event_map.vlpi_maps ?
+               &dev->event_map.vlpi_maps[new_map.eventid] : NULL;
+    if ( live_map && live_map->pirq == pirq &&
+         live_map->eventid == new_map.eventid &&
+         live_map->vpe_idx == new_map.vpe_idx )
+        *map = new_map;
+    spin_unlock(&dev->event_map.vlpi_lock);
+
+    return ret;
 }
 
 /*
