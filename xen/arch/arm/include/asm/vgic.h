@@ -70,6 +70,7 @@ struct pending_irq
      * LPI with the same number in an LR must be from an older LPI, which
      * has been unmapped before.
      *
+     * GIC_IRQ_GUEST_FORWARDED: the IRQ is forwarded to a VCPU(GICv4 only)
      */
 #define GIC_IRQ_GUEST_QUEUED   0
 #define GIC_IRQ_GUEST_ACTIVE   1
@@ -77,6 +78,7 @@ struct pending_irq
 #define GIC_IRQ_GUEST_ENABLED  3
 #define GIC_IRQ_GUEST_MIGRATING   4
 #define GIC_IRQ_GUEST_PRISTINE_LPI  5
+#define GIC_IRQ_GUEST_FORWARDED     6
     unsigned long status;
     struct irq_desc *desc; /* only set if the irq corresponds to a physical irq */
     unsigned int irq;
@@ -94,10 +96,19 @@ struct pending_irq
      * TODO: when implementing irq migration, taking only the current
      * vgic lock is not going to be enough. */
     struct list_head lr_queue;
+    bool hw;                    /* Tied to HW IRQ */
+#ifdef CONFIG_GICV4
+    struct its_vlpi_map *vlpi_map;
+#endif
 };
 
 #define NR_INTERRUPT_PER_RANK   32
 #define INTERRUPT_RANK_MASK (NR_INTERRUPT_PER_RANK - 1)
+
+static inline bool pirq_is_tied_to_hw(struct pending_irq *pirq)
+{
+    return IS_ENABLED(CONFIG_GICV4) && pirq->hw;
+}
 
 /* Represents state corresponding to a block of 32 interrupts */
 struct vgic_irq_rank {
@@ -126,6 +137,11 @@ struct vgic_irq_rank {
      */
     uint8_t vcpu[32];
 };
+
+#ifdef CONFIG_GICV4
+struct its_vm;
+struct its_vpe;
+#endif
 
 struct vgic_dist {
     /* Version of the vGIC */
@@ -193,15 +209,19 @@ struct vgic_dist {
      */
     bool rdists_enabled;                /* Is any redistributor enabled? */
     bool has_its;
+#ifdef CONFIG_GICV4
+    struct its_vm *its_vm;
+#endif
 #endif
 };
 
 struct vgic_cpu {
     /*
-     * SGIs and PPIs are per-VCPU, SPIs are domain global and in
-     * struct arch_domain.
+     * SGIs and PPIs are per-VCPU. Keep their pending state separately
+     * allocated so struct vcpu stays within a single page. SPIs are domain
+     * global and in struct arch_domain.
      */
-    struct pending_irq pending_irqs[32];
+    struct pending_irq *pending_irqs;
     struct vgic_irq_rank *private_irqs;
 
     /* This list is ordered by IRQ priority and it is used to keep
@@ -227,6 +247,9 @@ struct vgic_cpu {
 #define VGIC_V3_RDIST_LAST      (1 << 0)        /* last vCPU of the rdist */
 #define VGIC_V3_LPIS_ENABLED    (1 << 1)
     uint8_t flags;
+#ifdef CONFIG_GICV4
+    struct its_vpe *its_vpe;
+#endif
 };
 
 struct sgi_target {
@@ -344,6 +367,25 @@ extern bool vgic_migrate_irq(struct vcpu *old, struct vcpu *new, unsigned int ir
 extern void vgic_check_inflight_irqs_pending(struct vcpu *v,
                                              unsigned int rank, uint32_t r);
 
+/* GICV4 functions */
+#ifdef CONFIG_GICV4
+bool gic_support_vlpis(void);
+bool gic_support_directLPI(void);
+bool gic_support_vptValidDirty(void);
+bool gicv4_supports_vlpis(void);
+#else
+#define gic_support_vlpis() (false)
+#define gic_support_directLPI() (false)
+#define gic_support_vptValidDirty() (false)
+#define gicv4_supports_vlpis() (false)
+#endif
+
+int vgic_v4_its_vm_init(struct domain *d);
+void vgic_v4_free_its_vm(struct domain *d);
+int vgic_v4_its_vpe_init(struct vcpu *vcpu);
+void vgic_v4_its_vpe_free(struct vcpu *vcpu);
+void vgic_v4_load(struct vcpu *vcpu);
+void vgic_v4_put(struct vcpu *vcpu, bool need_db);
 #endif /* !CONFIG_NEW_VGIC */
 
 /*** Common VGIC functions used by Xen arch code ****/

@@ -235,6 +235,7 @@ enum gic_version {
     GIC_INVALID = 0,    /* the default until explicitly set up */
     GIC_V2,
     GIC_V3,
+    GIC_V4,
 };
 
 DECLARE_PER_CPU(uint64_t, lr_mask);
@@ -360,7 +361,7 @@ struct gic_hw_operations {
     /* Save GIC registers */
     void (*save_state)(struct vcpu *v);
     /* Restore GIC registers */
-    void (*restore_state)(const struct vcpu *v);
+    void (*restore_state)(struct vcpu *v);
     /* Dump GIC LR register information */
     void (*dump_state)(const struct vcpu *v);
 

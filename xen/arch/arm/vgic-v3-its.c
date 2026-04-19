@@ -387,7 +387,8 @@ out_unlock:
  * property table and update the virtual IRQ's state in the given pending_irq.
  * Must be called with the respective VGIC VCPU lock held.
  */
-static int update_lpi_property(struct domain *d, struct pending_irq *p)
+static int update_lpi_property(struct domain *d, struct pending_irq *p,
+                               bool needs_inv)
 {
     paddr_t addr;
     uint8_t property;
@@ -417,6 +418,9 @@ static int update_lpi_property(struct domain *d, struct pending_irq *p)
     else
         clear_bit(GIC_IRQ_GUEST_ENABLED, &p->status);
 
+    if ( pirq_is_tied_to_hw(p) )
+        return its_vlpi_prop_update(p, property, needs_inv);
+
     return 0;
 }
 
@@ -430,6 +434,9 @@ static int update_lpi_property(struct domain *d, struct pending_irq *p)
  */
 static void update_lpi_vgic_status(struct vcpu *v, struct pending_irq *p)
 {
+    if ( pirq_is_tied_to_hw(p) )
+        return;
+
     ASSERT(spin_is_locked(&v->arch.vgic.lock));
 
     if ( test_bit(GIC_IRQ_GUEST_ENABLED, &p->status) )
@@ -479,7 +486,7 @@ static int its_handle_inv(struct virt_its *its, uint64_t *cmdptr)
     spin_lock_irqsave(&vcpu->arch.vgic.lock, flags);
 
     /* Read the property table and update our cached status. */
-    if ( update_lpi_property(d, p) )
+    if ( update_lpi_property(d, p, true) )
         goto out_unlock;
 
     /* Check whether the LPI needs to go on a VCPU. */
@@ -552,7 +559,7 @@ static int its_handle_invall(struct virt_its *its, uint64_t *cmdptr)
 
             vlpi = pirqs[i]->irq;
             /* If that fails for a single LPI, carry on to handle the rest. */
-            err = update_lpi_property(its->d, pirqs[i]);
+            err = update_lpi_property(its->d, pirqs[i], false);
             if ( !err )
                 update_lpi_vgic_status(vcpu, pirqs[i]);
             else
@@ -589,6 +596,14 @@ static int its_discard_event(struct virt_its *its,
     if ( vlpi == INVALID_LPI )
         return -ENOENT;
 
+    p = gicv3_its_get_event_pending_irq(its->d, its->doorbell_address, vdevid,
+                                        vevid);
+    if ( unlikely(!p) )
+        return -EINVAL;
+
+    if ( pirq_is_tied_to_hw(p) )
+        if ( gicv4_its_vlpi_unmap(p) )
+            return -EINVAL;
     /*
      * TODO: This relies on the VCPU being correct in the ITS tables.
      * This can be fixed by either using a per-IRQ lock or by using
@@ -641,7 +656,7 @@ static void its_unmap_device(struct virt_its *its, uint32_t devid)
         /* Don't care about errors here, clean up as much as possible. */
         its_discard_event(its, devid, evid);
 
-out:
+ out:
     spin_unlock(&its->its_lock);
 }
 
@@ -751,21 +766,43 @@ static int its_handle_mapti(struct virt_its *its, uint64_t *cmdptr)
 
     vgic_init_pending_irq(pirq, intid);
 
+    pirq->lpi_vcpu_id = vcpu->vcpu_id;
+
+#ifdef CONFIG_GICV4
+    if ( gicv4_supports_vlpis() )
+    {
+        /*
+         * If on GICv4, we could let the VLPI being directly injected
+         * to the guest. To achieve that, the VLPI must be mapped using
+         * the VMAPTI command.
+         */
+        ret = gicv4_assign_guest_event(its->d, its->doorbell_address, devid,
+                                       eventid, pirq);
+        if ( ret && ret != -ENODEV )
+            goto out_remove_vlpi_host_entry;
+
+        if ( !ret )
+            pirq->hw = true;
+    }
+#endif
+
+    if ( pirq_is_tied_to_hw(pirq) )
+        set_bit(GIC_IRQ_GUEST_FORWARDED, &pirq->status);
+    else
+        /*
+         * Mark this LPI as new, so any older (now unmapped) LPI in any LR
+         * can be easily recognised as such.
+         */
+        set_bit(GIC_IRQ_GUEST_PRISTINE_LPI, &pirq->status);
+
     /*
      * Now read the guest's property table to initialize our cached state.
      * We don't need the VGIC VCPU lock here, because the pending_irq isn't
      * in the radix tree yet.
      */
-    ret = update_lpi_property(its->d, pirq);
+    ret = update_lpi_property(its->d, pirq, true);
     if ( ret )
-        goto out_remove_host_entry;
-
-    pirq->lpi_vcpu_id = vcpu->vcpu_id;
-    /*
-     * Mark this LPI as new, so any older (now unmapped) LPI in any LR
-     * can be easily recognised as such.
-     */
-    set_bit(GIC_IRQ_GUEST_PRISTINE_LPI, &pirq->status);
+        goto out_remove_vlpi_host_entry;
 
     /*
      * Now insert the pending_irq into the domain's LPI tree, so that
@@ -784,10 +821,13 @@ static int its_handle_mapti(struct virt_its *its, uint64_t *cmdptr)
      * existed in the tree. We don't support the latter case, so we always
      * cleanup and return an error here in any case.
      */
-out_remove_host_entry:
+ out_remove_vlpi_host_entry:
+    if ( pirq_is_tied_to_hw(pirq) )
+        gicv4_its_vlpi_unmap(pirq);
+
     gicv3_remove_guest_event(its->d, its->doorbell_address, devid, eventid);
 
-out_remove_mapping:
+ out_remove_mapping:
     spin_lock(&its->its_lock);
     write_itte(its, devid, eventid, UNMAPPED_COLLECTION, INVALID_LPI);
     spin_unlock(&its->its_lock);
@@ -805,6 +845,9 @@ static int its_handle_movi(struct virt_its *its, uint64_t *cmdptr)
     struct vcpu *ovcpu, *nvcpu;
     uint32_t vlpi;
     int ret = -1;
+#ifdef CONFIG_GICV4
+    bool vlpi_moved = false;
+#endif
 
     spin_lock(&its->its_lock);
     /* Check for a mapped LPI and get the LPI number. */
@@ -823,6 +866,57 @@ static int its_handle_movi(struct virt_its *its, uint64_t *cmdptr)
                                         devid, eventid);
     if ( unlikely(!p) )
         goto out_unlock;
+
+#ifdef CONFIG_GICV4
+    if ( pirq_is_tied_to_hw(p) )
+    {
+        unsigned int old_vpe_idx;
+
+        if ( !p->vlpi_map )
+        {
+            ret = -EINVAL;
+            goto out_unlock;
+        }
+
+        old_vpe_idx = p->vlpi_map->vpe_idx;
+        ret = gicv4_its_vlpi_move(p, nvcpu);
+        if ( ret )
+        {
+            if ( p->vlpi_map->vpe_idx != old_vpe_idx )
+            {
+                int rollback_ret = gicv4_its_vlpi_move(p, ovcpu);
+
+                if ( rollback_ret )
+                    ret = rollback_ret;
+            }
+
+            goto out_unlock;
+        }
+
+        vlpi_moved = true;
+    }
+#endif
+
+    /* Now store the new collection in the translation table. */
+    if ( !write_itte(its, devid, eventid, collid, vlpi) )
+    {
+#ifdef CONFIG_GICV4
+        ret = -1;
+
+        /*
+         * Keep the hardware VLPI state aligned with the guest ITTE.
+         * If the ITTE update fails, move the interrupt back to the old VPE.
+         */
+        if ( vlpi_moved )
+        {
+            int rollback_ret = gicv4_its_vlpi_move(p, ovcpu);
+
+            if ( rollback_ret )
+                ret = rollback_ret;
+        }
+#endif
+        goto out_unlock;
+    }
 
     /*
      * TODO: This relies on the VCPU being correct in the ITS tables.
@@ -845,10 +939,6 @@ static int its_handle_movi(struct virt_its *its, uint64_t *cmdptr)
      * Migrating those LPIs is not easy to do at the moment anyway, but should
      * become easier with the introduction of a per-IRQ lock.
      */
-
-    /* Now store the new collection in the translation table. */
-    if ( !write_itte(its, devid, eventid, collid, vlpi) )
-        goto out_unlock;
 
     ret = 0;
 

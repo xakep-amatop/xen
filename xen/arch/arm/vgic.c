@@ -22,6 +22,7 @@
 
 #include <asm/mmio.h>
 #include <asm/gic.h>
+#include <asm/gic_v3_its.h>
 #include <asm/vgic.h>
 
 
@@ -32,6 +33,13 @@ static inline unsigned int idx_to_virq(struct domain *d, unsigned int idx)
 
     return idx;
 }
+
+#ifdef CONFIG_GICV4
+bool gicv4_supports_vlpis(void)
+{
+    return gic_support_vlpis() && its_host_supports_vlpis();
+}
+#endif
 
 bool vgic_is_valid_line(struct domain *d, unsigned int virq)
 {
@@ -122,6 +130,8 @@ void vgic_init_pending_irq(struct pending_irq *p, unsigned int virq)
     INIT_LIST_HEAD(&p->lr_queue);
     p->irq = virq;
     p->lpi_vcpu_id = INVALID_VCPU_ID;
+    /* Whether virtual irq is tied to a HW one. */
+    p->hw = false;
 }
 
 static void vgic_rank_init(struct vgic_irq_rank *rank, uint8_t index,
@@ -327,6 +337,15 @@ int domain_vgic_init(struct domain *d, unsigned int nr_spis)
     for ( i = 0; i < NR_GIC_SGI; i++ )
         set_bit(i, d->arch.vgic.allocated_irqs);
 
+    if ( gicv4_supports_vlpis() )
+    {
+        ret = vgic_v4_its_vm_init(d);
+        if ( ret )
+        {
+            printk(XENLOG_ERR "GICv4 its vm allocation failed\n");
+            return ret;
+        }
+    }
     return 0;
 }
 
@@ -364,34 +383,65 @@ void domain_vgic_free(struct domain *d)
 #endif
     xfree(d->arch.vgic.pending_irqs);
     xfree(d->arch.vgic.allocated_irqs);
+
+    if ( gicv4_supports_vlpis() )
+        vgic_v4_free_its_vm(d);
 }
 
 int vcpu_vgic_init(struct vcpu *v)
 {
-    int i;
+    int i, ret;
 
     v->arch.vgic.private_irqs = xzalloc(struct vgic_irq_rank);
     if ( v->arch.vgic.private_irqs == NULL )
-      return -ENOMEM;
+        return -ENOMEM;
+
+    v->arch.vgic.pending_irqs =
+        xzalloc_array(struct pending_irq, NR_LOCAL_IRQS);
+    if ( v->arch.vgic.pending_irqs == NULL )
+    {
+        ret = -ENOMEM;
+        goto free_private_irqs;
+    }
 
     /* SGIs/PPIs are always routed to this VCPU */
     vgic_rank_init(v->arch.vgic.private_irqs, 0, v->vcpu_id);
 
     v->domain->arch.vgic.handler->vcpu_init(v);
 
-    memset(&v->arch.vgic.pending_irqs, 0, sizeof(v->arch.vgic.pending_irqs));
-    for (i = 0; i < 32; i++)
+    for ( i = 0; i < NR_LOCAL_IRQS; i++ )
         vgic_init_pending_irq(&v->arch.vgic.pending_irqs[i], i);
 
     INIT_LIST_HEAD(&v->arch.vgic.inflight_irqs);
     INIT_LIST_HEAD(&v->arch.vgic.lr_pending);
     spin_lock_init(&v->arch.vgic.lock);
 
+    if ( gicv4_supports_vlpis() )
+    {
+        ret = vgic_v4_its_vpe_init(v);
+        if ( ret )
+        {
+            printk(XENLOG_ERR "GICv4 its vpe allocation failed\n");
+            goto free_pending_irqs;
+        }
+    }
+
     return 0;
+
+ free_pending_irqs:
+    XFREE(v->arch.vgic.pending_irqs);
+ free_private_irqs:
+    XFREE(v->arch.vgic.private_irqs);
+
+    return ret;
 }
 
 void vcpu_vgic_free(struct vcpu *v)
 {
+    if ( gicv4_supports_vlpis() )
+        vgic_v4_its_vpe_free(v);
+
+    XFREE(v->arch.vgic.pending_irqs);
     XFREE(v->arch.vgic.private_irqs);
 }
 
@@ -944,4 +994,3 @@ void vgic_check_inflight_irqs_pending(struct vcpu *v, unsigned int rank, uint32_
  * indent-tabs-mode: nil
  * End:
  */
-

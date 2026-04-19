@@ -9,6 +9,9 @@ config ARM_64
 	select 64BIT
 	select HAS_FAST_MULTIPLY
 	select HAS_VPCI_GUEST_SUPPORT if PCI_PASSTHROUGH
+	select HAS_ITS
+	select GICV4
+	select UNSUPPORTED
 
 config ARM
 	def_bool y
@@ -254,6 +257,12 @@ config ARM64_BTI
 	help
 	  Branch Target Identification support.
 	  This feature is not supported in Xen.
+
+config GICV4
+	bool "GICv4 driver"
+	depends on GICV3 && HAS_ITS
+	help
+	  Driver for ARM Generic Interrupt Controller v4 extension.
 
 source "arch/arm/tee/Kconfig"
 

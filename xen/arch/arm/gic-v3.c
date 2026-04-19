@@ -45,11 +45,75 @@ static struct {
 
 static struct gic_info gicv3_info;
 
+#ifdef CONFIG_GICV4
+/* Global state */
+static struct {
+    bool has_vlpis;
+    bool has_direct_lpi;
+    bool has_vpend_valid_dirty;
+    bool has_rvpeid;
+} gicv4 = { .has_vlpis = true, .has_direct_lpi = true,
+            .has_vpend_valid_dirty = true, .has_rvpeid = true, };
+
+
+bool gic_support_directLPI(void)
+{
+    return gicv4.has_direct_lpi;
+}
+
+bool gic_support_vlpis(void)
+{
+    return gicv4.has_vlpis;
+}
+
+bool gic_support_vptValidDirty(void)
+{
+    return gicv4.has_vpend_valid_dirty;
+}
+
+static void __init gicv4_update_lpi_properties(void __iomem *ptr)
+{
+    uint64_t typer;
+    uint32_t ctlr;
+
+    typer = readq_relaxed(ptr + GICR_TYPER);
+    ctlr = readl_relaxed(ptr + GICR_CTLR);
+
+    /*
+     * GICR_CTLR.IR also mandates the invalidate/sync registers.
+     * RVPEID identifies the GICv4.1 vPE model, which implies the same
+     * registers even when GICR_TYPER.DirectLPIS is clear.
+     *
+     * If any redistributor lacks a feature, disable it system-wide.
+     */
+    gicv4.has_vlpis &= !!(typer & GICR_TYPER_VLPIS);
+    gicv4.has_rvpeid &= !!(typer & GICR_TYPER_RVPEID);
+    gicv4.has_direct_lpi &= !!(typer & GICR_TYPER_DirectLPIS) ||
+                           !!(ctlr & GICR_CTLR_IR) ||
+                           !!(typer & GICR_TYPER_RVPEID);
+    gicv4.has_vpend_valid_dirty &= !!(typer & GICR_TYPER_DIRTY);
+
+    /* Detect non-sensical configurations */
+    if ( gicv4.has_rvpeid && !gicv4.has_vlpis )
+    {
+        gicv4.has_direct_lpi = false;
+        gicv4.has_rvpeid = false;
+    }
+
+    printk("GICv4: CPU%d: %sVLPI support, %sdirect LPI support, %sValid+Dirty support, %sRVPEID support\n",
+           smp_processor_id(), typer & GICR_TYPER_VLPIS ? "" : "no ",
+           (typer & GICR_TYPER_DirectLPIS) ||
+           (ctlr & GICR_CTLR_IR) ||
+           (typer & GICR_TYPER_RVPEID) ? "" : "no ",
+           typer & GICR_TYPER_DIRTY ? "" : "no ",
+           typer & GICR_TYPER_RVPEID ? "" : "no ");
+}
+#endif
+
 /* per-cpu re-distributor base */
-static DEFINE_PER_CPU(void __iomem*, rbase);
+DEFINE_PER_CPU(void __iomem*, rbase);
 
 #define GICD                   (gicv3.map_dbase)
-#define GICD_RDIST_BASE        (this_cpu(rbase))
 #define GICD_RDIST_SGI_BASE    (GICD_RDIST_BASE + SZ_64K)
 
 /*
@@ -388,13 +452,16 @@ static void gicv3_save_state(struct vcpu *v)
      * are now visible to the system register interface
      */
     dsb(sy);
+#ifdef CONFIG_GICV4
+    vgic_v4_put(v, false);
+#endif
     gicv3_save_lrs(v);
     save_aprn_regs(&v->arch.gic);
     v->arch.gic.v3.vmcr = READ_SYSREG(ICH_VMCR_EL2);
     v->arch.gic.v3.sre_el1 = READ_SYSREG(ICC_SRE_EL1);
 }
 
-static void gicv3_restore_state(const struct vcpu *v)
+static void gicv3_restore_state(struct vcpu *v)
 {
     register_t val;
 
@@ -422,6 +489,10 @@ static void gicv3_restore_state(const struct vcpu *v)
     WRITE_SYSREG(v->arch.gic.v3.vmcr, ICH_VMCR_EL2);
     restore_aprn_regs(&v->arch.gic);
     gicv3_restore_lrs(v);
+
+#ifdef CONFIG_GICV4
+    vgic_v4_load(v);
+#endif
 
     /*
      * Make sure all stores are visible the GIC
@@ -903,6 +974,10 @@ static int __init gicv3_populate_rdist(void)
             {
                 this_cpu(rbase) = ptr;
 
+#ifdef CONFIG_GICV4
+                gicv4_update_lpi_properties(ptr);
+#endif
+
                 if ( typer & GICR_TYPER_PLPIS )
                 {
                     paddr_t rdist_addr;
@@ -934,7 +1009,7 @@ static int __init gicv3_populate_rdist(void)
                 }
 
                 printk("GICv3: CPU%d: Found redistributor in region %d @%p\n",
-                        smp_processor_id(), i, ptr);
+                       smp_processor_id(), i, ptr);
                 return 0;
             }
 
@@ -1915,6 +1990,31 @@ static bool gic_dist_supports_lpis(void)
     return (readl_relaxed(GICD + GICD_TYPER) & GICD_TYPE_LPIS);
 }
 
+#ifdef CONFIG_GICV4
+static int __init gicv4_init(void)
+{
+    int ret;
+
+    gicv4_its_vpeid_allocator_init();
+
+    ret = gicv4_init_vpe_proxy();
+    if ( ret )
+    {
+        printk(XENLOG_ERR
+               "GICv4: failed to initialize VPE proxy device: %d\n", ret);
+        return ret;
+    }
+
+    return 0;
+}
+#else
+static int __init gicv4_init(void)
+{
+    ASSERT_UNREACHABLE();
+    return -EINVAL;
+}
+#endif
+
 /* Set up the GIC */
 static int __init gicv3_init(void)
 {
@@ -1936,6 +2036,8 @@ static int __init gicv3_init(void)
     reg = readl_relaxed(GICD + GICD_PIDR2) & GIC_PIDR2_ARCH_MASK;
     if ( reg != GIC_PIDR2_ARCH_GICv3 && reg != GIC_PIDR2_ARCH_GICv4 )
          panic("GICv3: no distributor detected\n");
+
+    gicv3_info.hw_version = (reg == GIC_PIDR2_ARCH_GICv4) ? GIC_V4 : GIC_V3;
 
     for ( i = 0; i < gicv3.rdist_count; i++ )
     {
@@ -1989,6 +2091,12 @@ static int __init gicv3_init(void)
 
     gicv3_hyp_init();
 
+    if ( gic_support_vlpis() )
+    {
+        res = gicv4_init();
+        if ( res )
+            goto out;
+    }
 out:
     spin_unlock(&gicv3.lock);
 

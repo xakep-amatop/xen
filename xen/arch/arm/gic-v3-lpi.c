@@ -8,6 +8,7 @@
  */
 
 #include <xen/cpu.h>
+#include <xen/err.h>
 #include <xen/lib.h>
 #include <xen/mm.h>
 #include <xen/param.h>
@@ -39,7 +40,7 @@ union host_lpi {
     struct {
         uint32_t virt_lpi;
         uint16_t dom_id;
-        uint16_t pad;
+        uint16_t db_vcpu_id;
     };
 };
 
@@ -80,6 +81,7 @@ static DEFINE_PER_CPU(struct lpi_redist_data, lpi_redist);
 
 #define MAX_NR_HOST_LPIS   (lpi_data.max_host_lpi_ids - LPI_OFFSET)
 #define HOST_LPIS_PER_PAGE      (PAGE_SIZE / sizeof(union host_lpi))
+uint32_t lpi_id_bits;
 
 static union host_lpi *gic_get_host_lpi(uint32_t plpi)
 {
@@ -182,24 +184,48 @@ void gicv3_do_LPI(unsigned int lpi)
      * ignore them, as they have no further state and no-one can expect
      * to see them if they have not been mapped.
      */
-    if ( hlpi.virt_lpi == INVALID_LPI )
+    if ( hlpi.virt_lpi == INVALID_LPI && hlpi.db_vcpu_id == INVALID_VCPU_ID )
         goto out;
 
     d = rcu_lock_domain_by_id(hlpi.dom_id);
     if ( !d )
         goto out;
 
-    /*
-     * TODO: Investigate what to do here for potential interrupt storms.
-     * As we keep all host LPIs enabled, for disabling LPIs we would need
-     * to queue a ITS host command, which we avoid so far during a guest's
-     * runtime. Also re-enabling would trigger a host command upon the
-     * guest sending a command, which could be an attack vector for
-     * hogging the host command queue.
-     * See the thread around here for some background:
-     * https://lists.xen.org/archives/html/xen-devel/2016-12/msg00003.html
-     */
-    vgic_vcpu_inject_lpi(d, hlpi.virt_lpi);
+    /* It is a doorbell interrupt. */
+    if ( hlpi.db_vcpu_id != INVALID_VCPU_ID )
+    {
+#ifdef CONFIG_GICV4
+        struct vcpu *v = d->vcpu[hlpi.db_vcpu_id];
+
+        /* We got the message, no need to fire again */
+        its_vpe_mask_db(v->arch.vgic.its_vpe);
+
+        /*
+         * Update the pending_last flag that indicates that VLPIs are pending.
+         * And the corresponding vcpu is also kicked into action.
+         */
+        write_atomic(&v->arch.vgic.its_vpe->pending_last, true);
+
+        vcpu_kick(v);
+#else
+        printk(XENLOG_WARNING
+               "Doorbell LPI is only supported on GICv4\n");
+#endif
+    }
+    else
+    {
+        /*
+         * TODO: Investigate what to do here for potential interrupt storms.
+         * As we keep all host LPIs enabled, for disabling LPIs we would need
+         * to queue a ITS host command, which we avoid so far during a guest's
+         * runtime. Also re-enabling would trigger a host command upon the
+         * guest sending a command, which could be an attack vector for
+         * hogging the host command queue.
+         * See the thread around here for some background:
+         * https://lists.xen.org/archives/html/xen-devel/2016-12/msg00003.html
+         */
+        vgic_vcpu_inject_lpi(d, hlpi.virt_lpi);
+    }
 
     rcu_unlock_domain(d);
 
@@ -208,7 +234,8 @@ out:
 }
 
 void gicv3_lpi_update_host_entry(uint32_t host_lpi, int domain_id,
-                                 uint32_t virt_lpi)
+                                 uint32_t virt_lpi, bool is_db,
+                                 uint16_t db_vcpu_id)
 {
     union host_lpi *hlpip, hlpi;
 
@@ -218,19 +245,24 @@ void gicv3_lpi_update_host_entry(uint32_t host_lpi, int domain_id,
 
     hlpip = &lpi_data.host_lpis[host_lpi / HOST_LPIS_PER_PAGE][host_lpi % HOST_LPIS_PER_PAGE];
 
-    hlpi.virt_lpi = virt_lpi;
-    hlpi.dom_id = domain_id;
+    if ( !is_db )
+    {
+        hlpi.virt_lpi = virt_lpi;
+        hlpi.dom_id = domain_id;
+    }
+    else
+    {
+        hlpi.dom_id = domain_id;
+        hlpi.db_vcpu_id = db_vcpu_id;
+    }
 
     write_u64_atomic(&hlpip->data, hlpi.data);
 }
 
-static int gicv3_lpi_allocate_pendtable(unsigned int cpu)
+struct page_info *lpi_allocate_pendtable(void)
 {
     void *pendtable;
     unsigned int order;
-
-    if ( per_cpu(lpi_redist, cpu).pending_table )
-        return -EBUSY;
 
     /*
      * The pending table holds one bit per LPI and even covers bits for
@@ -241,19 +273,33 @@ static int gicv3_lpi_allocate_pendtable(unsigned int cpu)
     order = get_order_from_bytes(max(lpi_data.max_host_lpi_ids / 8, (unsigned long)SZ_64K));
     pendtable = alloc_xenheap_pages(order, gicv3_its_get_memflags());
     if ( !pendtable )
-        return -ENOMEM;
+        return ERR_PTR(-ENOMEM);
 
     memset(pendtable, 0, PAGE_SIZE << order);
     /* Make sure the physical address can be encoded in the register. */
     if ( virt_to_maddr(pendtable) & ~GENMASK(51, 16) )
     {
         free_xenheap_pages(pendtable, order);
-        return -ERANGE;
+        return ERR_PTR(-ERANGE);
     }
     clean_and_invalidate_dcache_va_range(pendtable,
                                          lpi_data.max_host_lpi_ids / 8);
 
-    per_cpu(lpi_redist, cpu).pending_table = pendtable;
+    return virt_to_page(pendtable);
+}
+
+static int gicv3_lpi_allocate_pendtable(unsigned int cpu)
+{
+    struct page_info *pendtable;
+
+    if ( per_cpu(lpi_redist, cpu).pending_table )
+        return -EBUSY;
+
+    pendtable = lpi_allocate_pendtable();
+    if ( IS_ERR(pendtable) )
+        return PTR_ERR(pendtable);
+
+    per_cpu(lpi_redist, cpu).pending_table = page_to_virt(pendtable);
 
     return 0;
 }
@@ -296,6 +342,38 @@ static int gicv3_lpi_set_pendtable(void __iomem *rdist_base)
     return 0;
 }
 
+void *lpi_allocate_vproptable(void)
+{
+    unsigned long alloc_size;
+    void *table;
+    unsigned int order;
+
+    /* The virtual property table holds one byte per host LPI. */
+    order = get_order_from_bytes(MAX_NR_HOST_LPIS);
+    alloc_size = PAGE_SIZE << order;
+
+    table = alloc_xenheap_pages(order, gicv3_its_get_memflags());
+    if ( !table )
+        return NULL;
+
+    /* Make sure the physical address can be encoded in the register. */
+    if ( (virt_to_maddr(table) & ~GENMASK(51, 12)) )
+    {
+        free_xenheap_pages(table, order);
+        return NULL;
+    }
+
+    memset(table, GIC_PRI_IRQ | LPI_PROP_RES1, alloc_size);
+    clean_and_invalidate_dcache_va_range(table, alloc_size);
+
+    return table;
+}
+
+void lpi_free_vproptable(void *vproptable)
+{
+    free_xenheap_pages(vproptable, get_order_from_bytes(MAX_NR_HOST_LPIS));
+}
+
 /*
  * Tell a redistributor about the (shared) property table, allocating one
  * if not already done.
@@ -336,7 +414,8 @@ static int gicv3_lpi_set_proptable(void __iomem * rdist_base)
     }
 
     /* Encode the number of bits needed, minus one */
-    reg |= fls(lpi_data.max_host_lpi_ids - 1) - 1;
+    lpi_id_bits = fls(lpi_data.max_host_lpi_ids - 1);
+    reg |= lpi_id_bits - 1;
 
     reg |= virt_to_maddr(lpi_data.lpi_property);
 
@@ -492,6 +571,30 @@ static int find_unused_host_lpi(uint32_t start, uint32_t *index)
     return -1;
 }
 
+uint8_t *lpi_host_proptable(void)
+{
+    return lpi_data.lpi_property;
+}
+
+unsigned long lpi_max_host_lpis(void)
+{
+    return lpi_data.max_host_lpi_ids;
+}
+
+void lpi_write_config(uint8_t *prop_table, uint32_t lpi, uint8_t clr,
+                      uint8_t set)
+{
+    u8 *cfg;
+
+    cfg = prop_table + lpi - LPI_OFFSET;
+    *cfg &= ~clr;
+    *cfg |= set | LPI_PROP_RES1;
+
+    /* Make the above write visible to the redistributors. */
+    if ( lpi_data.flags & LPI_PROPTABLE_NEEDS_FLUSHING )
+        clean_and_invalidate_dcache_va_range(cfg, sizeof(*cfg));
+}
+
 /*
  * Allocate a block of 32 LPIs on the given host ITS for device "devid",
  * starting with "eventid". Put them into the respective ITT by issuing a
@@ -557,6 +660,7 @@ int gicv3_allocate_host_lpi_block(struct domain *d, uint32_t *first_lpi)
          */
         hlpi.virt_lpi = INVALID_LPI;
         hlpi.dom_id = d->domain_id;
+        hlpi.db_vcpu_id = INVALID_VCPU_ID;
         write_u64_atomic(&lpi_data.host_lpis[chunk][lpi_idx + i].data,
                          hlpi.data);
 
@@ -564,7 +668,8 @@ int gicv3_allocate_host_lpi_block(struct domain *d, uint32_t *first_lpi)
          * Enable this host LPI, so we don't have to do this during the
          * guest's runtime.
          */
-        lpi_data.lpi_property[lpi + i] |= LPI_PROP_ENABLED;
+        lpi_write_config(lpi_data.lpi_property, lpi + i + LPI_OFFSET, 0xff,
+                         LPI_PROP_ENABLED);
     }
 
     lpi_data.next_free_lpi = lpi + LPI_BLOCK;

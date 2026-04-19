@@ -20,6 +20,15 @@
 
 #include <xen/sizes.h>
 
+#ifndef FIELD_GET
+#define FIELD_GET(_mask, _reg)          \
+    ((typeof(_mask))(((_reg) & (_mask)) >> (ffs64(_mask) - 1)))
+#endif
+
+#ifndef FIELD_PREP
+#define FIELD_PREP(_mask, _val)         \
+    (((typeof(_mask))(_val) << (ffs64(_mask) - 1)) & (_mask))
+#endif
 /*
  * Additional registers defined in GIC v3.
  * Common GICD registers are defined in gic.h
@@ -146,10 +155,14 @@
 #define GICR_NSACR                   (0x0E00)
 
 #define GICR_CTLR_ENABLE_LPIS        (1U << 0)
+#define GICR_CTLR_IR                 (1U << 2)
 
 #define GICR_TYPER_PLPIS             (1U << 0)
 #define GICR_TYPER_VLPIS             (1U << 1)
+#define GICR_TYPER_DIRTY             (1U << 2)
+#define GICR_TYPER_DirectLPIS        (1U << 3)
 #define GICR_TYPER_LAST              (1U << 4)
+#define GICR_TYPER_RVPEID            (1U << 7)
 #define GICR_TYPER_PROC_NUM_SHIFT    8
 #define GICR_TYPER_PROC_NUM_MASK     (0xffff << GICR_TYPER_PROC_NUM_SHIFT)
 
@@ -247,6 +260,12 @@ struct rdist_region {
     void __iomem *map_base;
     bool single_rdist;
 };
+
+/* per-cpu re-distributor base */
+DECLARE_PER_CPU(void __iomem*, rbase);
+
+#define GICD_RDIST_BASE             (this_cpu(rbase))
+#define GICD_RDIST_BASE_CPU(cpu)    (per_cpu(rbase, cpu))
 
 #endif /* __ASM_ARM_GIC_V3_DEFS_H__ */
 
