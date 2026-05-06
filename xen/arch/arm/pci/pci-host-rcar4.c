@@ -11,6 +11,7 @@
 #include <asm/device.h>
 #include <asm/io.h>
 #include <asm/pci.h>
+#include <asm/suspend.h>
 
 #include "pci-designware.h"
 #include "pci-host-rcar4.h"
@@ -220,6 +221,9 @@ static int __init pci_host_rcar4_probe(struct dt_device_node *dev,
 
     dw_pcie_set_priv(bridge, priv);
     dw_pcie_set_version(bridge, RCAR4_DWC_VERSION);
+
+    host_system_suspend_disable(
+        "R-Car Gen4 PCIe OSID state is not restored");
 
     return 0;
 err:
