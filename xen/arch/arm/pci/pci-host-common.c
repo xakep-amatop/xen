@@ -20,6 +20,7 @@
 #include <xen/pci.h>
 #include <xen/rwlock.h>
 #include <xen/sched.h>
+#include <xen/suspend.h>
 #include <xen/vmap.h>
 
 #include <asm/setup.h>
@@ -284,6 +285,8 @@ pci_host_common_probe(struct dt_device_node *dev,
     }
 
     pci_add_host_bridge(bridge);
+
+    host_system_suspend_disable("PCI host bridge lacks suspend/resume support");
 
     return bridge;
 

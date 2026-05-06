@@ -19,6 +19,7 @@
 #include <xen/device_tree.h>
 #include <xen/iommu.h>
 #include <xen/lib.h>
+#include <xen/suspend.h>
 
 #include <asm/device.h>
 
@@ -46,6 +47,9 @@ void __init iommu_set_ops(const struct iommu_ops *ops)
     }
 
     iommu_ops = ops;
+
+    if ( !ops->suspend || !ops->resume )
+        host_system_suspend_disable("IOMMU driver lacks suspend/resume support");
 }
 
 int __init iommu_hardware_setup(void)

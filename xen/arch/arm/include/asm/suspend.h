@@ -38,7 +38,19 @@ extern struct resume_cpu_context resume_cpu_context;
 
 int prepare_resume_ctx(struct resume_cpu_context *ptr);
 void hyp_resume(void);
-#endif /* CONFIG_SYSTEM_SUSPEND */
+bool host_system_suspend_allowed(void);
+void host_system_suspend_disable(const char *reason);
+bool host_system_suspend_domains_ready(const struct domain *skip);
+
+#else /* !CONFIG_SYSTEM_SUSPEND */
+
+static inline bool host_system_suspend_allowed(void) { return false; }
+static inline void host_system_suspend_disable(const char *reason) {}
+static inline bool host_system_suspend_domains_ready(const struct domain *skip)
+{
+    return false;
+}
+#endif
 
 #endif /* ARM_SUSPEND_H */
 

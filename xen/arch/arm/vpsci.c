@@ -5,6 +5,7 @@
 
 #include <asm/current.h>
 #include <asm/domain.h>
+#include <asm/suspend.h>
 #include <asm/vgic.h>
 #include <asm/vpsci.h>
 #include <asm/event.h>
@@ -219,6 +220,22 @@ static void do_psci_0_2_system_reset(void)
     domain_shutdown(d,SHUTDOWN_reboot);
 }
 
+static bool domain_psci_system_suspend_allowed(const struct domain *d)
+{
+    /*
+     * A control domain SYSTEM_SUSPEND request drives the host suspend path.
+     * Keep host-wide gates in host_system_suspend_allowed() so PSCI_FEATURES
+     * and the real call report the same policy.
+     */
+    if ( is_control_domain(d) )
+        return host_system_suspend_allowed();
+
+    if ( is_hardware_domain(d) )
+        return IS_ENABLED(CONFIG_SYSTEM_SUSPEND);
+
+    return true;
+}
+
 static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
 {
     int32_t rc;
@@ -232,8 +249,7 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
     if ( is_64bit_domain(d) && is_thumb )
         return PSCI_INVALID_ADDRESS;
 
-    /* SYSTEM_SUSPEND is not supported for the hardware domain yet */
-    if ( is_hardware_domain(d) )
+    if ( !domain_psci_system_suspend_allowed(d) )
         return PSCI_NOT_SUPPORTED;
 
     /* Ensure that all CPUs other than the calling one are offline */
@@ -247,6 +263,9 @@ static int32_t do_psci_1_0_system_suspend(register_t epoint, register_t cid)
         }
     }
     domain_unlock(d);
+
+    if ( is_control_domain(d) && !host_system_suspend_domains_ready(d) )
+        return PSCI_DENIED;
 
     rc = vpsci_build_guest_context(current, epoint, cid, &ctxt);
     if ( rc )
@@ -290,7 +309,10 @@ static int32_t do_psci_1_0_features(uint32_t psci_func_id)
         return 0;
     case PSCI_1_0_FN32_SYSTEM_SUSPEND:
     case PSCI_1_0_FN64_SYSTEM_SUSPEND:
-        return is_hardware_domain(current->domain) ? PSCI_NOT_SUPPORTED : 0;
+        if ( domain_psci_system_suspend_allowed(current->domain) )
+            return 0;
+
+        return PSCI_NOT_SUPPORTED;
     default:
         return PSCI_NOT_SUPPORTED;
     }

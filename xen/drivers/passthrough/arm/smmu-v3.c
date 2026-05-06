@@ -91,6 +91,7 @@
 #include <asm/io.h>
 #include <asm/iommu_fwspec.h>
 #include <asm/platform.h>
+#include <asm/suspend.h>
 
 #include "smmu-v3.h"
 
@@ -1902,6 +1903,9 @@ static void arm_smmu_setup_msis(struct arm_smmu_device *smmu)
 			continue;
 		}
 	}
+
+	host_system_suspend_disable(
+		"SMMUv3 MSI IRQ path is unsupported for host suspend");
 
 	/* Add callback to free MSIs on teardown */
 	devm_add_action(dev, arm_smmu_free_msis, dev);
