@@ -40,27 +40,67 @@ struct minimal_dtb_header {
     /* There are other fields but we don't use them yet. */
 };
 
-static void __init place_modules(struct kernel_info *info,
-                                 paddr_t kernbase, paddr_t kernend)
+static paddr_t __init
+kernel_zimage_place_in_bank(const struct kernel_info *info,
+                            paddr_t bank_start, paddr_t bank_size)
 {
-    /* Align DTB and initrd size to 2Mb. Linux only requires 4 byte alignment */
-    const struct boot_module *mod = info->bd.initrd;
-    const struct membanks *mem = kernel_info_get_mem(info);
-    const paddr_t initrd_len = ROUNDUP(mod ? mod->size : 0, MB(2));
-    const paddr_t dtb_len = ROUNDUP(fdt_totalsize(info->fdt), MB(2));
-    const paddr_t modsize = initrd_len + dtb_len;
+    paddr_t load_addr;
 
-    /* Convenient */
-    const paddr_t rambase = mem->bank[0].start;
-    const paddr_t ramsize = mem->bank[0].size;
-    const paddr_t ramend = rambase + ramsize;
+#ifdef CONFIG_HAS_DOMAIN_TYPE
+    if ( (info->type == DOMAIN_64BIT) && (info->image.start == 0) )
+        return bank_start + info->image.text_offset;
+#endif
+
+    /*
+     * If start is zero, the zImage is position independent, in this
+     * case Documentation/arm/Booting recommends loading below 128MiB
+     * and above 32MiB. Load it as high as possible within these
+     * constraints, while also avoiding the DTB.
+     */
+    if ( info->image.start == 0 )
+    {
+        paddr_t load_end;
+        paddr_t ram128mb;
+
+        ram128mb = bank_start + MB(128);
+        load_end = bank_start + bank_size;
+        load_end = min(ram128mb, load_end);
+
+        if ( load_end - bank_start < info->image.len )
+            return INVALID_PADDR;
+
+        load_addr = load_end - info->image.len;
+        /* Align to 2MB */
+        load_addr &= ~(MB(2) - 1);
+        if ( load_addr < bank_start )
+            return INVALID_PADDR;
+    }
+    else
+        load_addr = info->image.start;
+
+    return load_addr;
+}
+
+static bool __init
+first_bank_has_enough_room(paddr_t ramsize, paddr_t kernbase,
+                           paddr_t kernend, paddr_t modsize)
+{
     const paddr_t kernsize = ROUNDUP(kernend, MB(2)) - kernbase;
+
+    /*
+     * Check only the aggregate kernel/module footprint. The actual DTB/initrd
+     * location is selected by find_module_placement().
+     */
+    return modsize + kernsize <= ramsize;
+}
+
+static bool __init
+find_module_placement(paddr_t rambase, paddr_t ramsize,
+                      paddr_t kernbase, paddr_t kernend,
+                      paddr_t modsize, paddr_t *modbase)
+{
+    const paddr_t ramend = rambase + ramsize;
     const paddr_t ram128mb = rambase + MB(128);
-
-    paddr_t modbase;
-
-    if ( modsize + kernsize > ramsize )
-        panic("Not enough memory in the first bank for the kernel+dtb+initrd\n");
 
     /*
      * DTB must be loaded such that it does not conflict with the
@@ -80,16 +120,48 @@ static void __init place_modules(struct kernel_info *info,
      * tools/libxc/xc_dom_arm.c:arch_setup_meminit as well.
      */
     if ( ramend >= ram128mb + modsize && kernend < ram128mb )
-        modbase = ram128mb;
-    else if ( ramend - modsize > ROUNDUP(kernend, MB(2)) )
-        modbase = ramend - modsize;
-    else if ( kernbase - rambase > modsize )
-        modbase = kernbase - modsize;
-    else
     {
-        panic("Unable to find suitable location for dtb+initrd\n");
-        return;
+        *modbase = ram128mb;
+        return true;
     }
+
+    if ( ramend - modsize > ROUNDUP(kernend, MB(2)) )
+    {
+        *modbase = ramend - modsize;
+        return true;
+    }
+
+    if ( kernbase - rambase > modsize )
+    {
+        *modbase = kernbase - modsize;
+        return true;
+    }
+
+    return false;
+}
+
+static void __init place_modules(struct kernel_info *info,
+                                 paddr_t kernbase, paddr_t kernend)
+{
+    /* Align DTB and initrd size to 2Mb. Linux only requires 4 byte alignment */
+    const struct boot_module *mod = info->bd.initrd;
+    const struct membanks *mem = kernel_info_get_mem(info);
+    const paddr_t initrd_len = ROUNDUP(mod ? mod->size : 0, MB(2));
+    const paddr_t dtb_len = ROUNDUP(fdt_totalsize(info->fdt), MB(2));
+    const paddr_t modsize = initrd_len + dtb_len;
+
+    /* Convenient */
+    const paddr_t rambase = mem->bank[0].start;
+    const paddr_t ramsize = mem->bank[0].size;
+
+    paddr_t modbase;
+
+    if ( !first_bank_has_enough_room(ramsize, kernbase, kernend, modsize) )
+        panic("Not enough memory in the first bank for the kernel+dtb+initrd\n");
+
+    if ( !find_module_placement(rambase, ramsize, kernbase, kernend, modsize,
+                                &modbase) )
+        panic("Unable to find suitable location for dtb+initrd\n");
 
     info->dtb_paddr = modbase;
     info->initrd_paddr = info->dtb_paddr + dtb_len;
@@ -100,32 +172,51 @@ static paddr_t __init kernel_zimage_place(struct kernel_info *info)
     const struct membanks *mem = kernel_info_get_mem(info);
     paddr_t load_addr;
 
-#ifdef CONFIG_HAS_DOMAIN_TYPE
-    if ( (info->type == DOMAIN_64BIT) && (info->image.start == 0) )
-        return mem->bank[0].start + info->image.text_offset;
-#endif
-
-    /*
-     * If start is zero, the zImage is position independent, in this
-     * case Documentation/arm/Booting recommends loading below 128MiB
-     * and above 32MiB. Load it as high as possible within these
-     * constraints, while also avoiding the DTB.
-     */
-    if ( info->image.start == 0 )
-    {
-        paddr_t load_end;
-
-        load_end = mem->bank[0].start + mem->bank[0].size;
-        load_end = MIN(mem->bank[0].start + MB(128), load_end);
-
-        load_addr = load_end - info->image.len;
-        /* Align to 2MB */
-        load_addr &= ~((2 << 20) - 1);
-    }
-    else
-        load_addr = info->image.start;
+    load_addr = kernel_zimage_place_in_bank(info, mem->bank[0].start,
+                                            mem->bank[0].size);
+    if ( load_addr == INVALID_PADDR )
+        panic("Unable to find suitable location for the kernel\n");
 
     return load_addr;
+}
+
+bool __init arch_hwdom_first_bank_ok(const struct kernel_info *info,
+                                     paddr_t bank_start,
+                                     paddr_t bank_size)
+{
+    const struct boot_module *initrd = info->bd.initrd;
+    /*
+     * place_modules() rounds the DTB and initrd placement to 2MB boundaries;
+     * use the same granularity when checking whether the first bank can hold
+     * the boot modules.
+     */
+    const paddr_t initrd_len = ROUNDUP(initrd ? initrd->size : 0, MB(2));
+    /*
+     * The hardware domain FDT has not been generated yet. Use the allocation
+     * size as a conservative upper bound for the final DTB size.
+     */
+    const paddr_t dtb_len = ROUNDUP(hwdom_get_fdt_alloc_size(), MB(2));
+    const paddr_t rambase = bank_start;
+    const paddr_t ramsize = bank_size;
+    const paddr_t modsize = initrd_len + dtb_len;
+    const paddr_t ramend = rambase + ramsize;
+    paddr_t kernbase;
+    paddr_t kernend;
+    paddr_t modbase;
+
+    kernbase = kernel_zimage_place_in_bank(info, bank_start, bank_size);
+    if ( kernbase == INVALID_PADDR ||
+         info->image.len > INVALID_PADDR - kernbase )
+        return false;
+
+    kernend = kernbase + info->image.len;
+
+    if ( kernbase < rambase || kernend > ramend )
+        return false;
+
+    return first_bank_has_enough_room(ramsize, kernbase, kernend, modsize) &&
+           find_module_placement(rambase, ramsize, kernbase, kernend, modsize,
+                                 &modbase);
 }
 
 static void __init kernel_zimage_load(struct kernel_info *info)
