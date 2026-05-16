@@ -128,6 +128,37 @@ static paddr_t __init kernel_zimage_place(struct kernel_info *info)
     return load_addr;
 }
 
+static paddr_t __init kernel_placement_size(paddr_t load_addr, paddr_t len)
+{
+    return ROUNDUP(load_addr + len, MB(2)) - load_addr;
+}
+
+paddr_t __init arch_get_minimum_first_bank_size(struct kernel_info *info,
+                                                paddr_t bank_start)
+{
+    const struct boot_module *mod = info->bd.initrd;
+    const paddr_t initrd_len = ROUNDUP(mod ? mod->size : 0, MB(2));
+    const paddr_t dtb_len = ROUNDUP(dom0_get_fdt_size_hint(), MB(2));
+    paddr_t kernsize;
+
+#ifdef CONFIG_HAS_DOMAIN_TYPE
+    if ( (info->type == DOMAIN_64BIT) && (info->image.start == 0) )
+    {
+        paddr_t load_addr = bank_start + info->image.text_offset;
+
+        kernsize = kernel_placement_size(load_addr, info->image.len);
+        return kernsize + initrd_len + dtb_len;
+    }
+#endif
+
+    if ( info->image.start == 0 )
+        kernsize = ROUNDUP(info->image.len, MB(2));
+    else
+        kernsize = kernel_placement_size(info->image.start, info->image.len);
+
+    return kernsize + initrd_len + dtb_len;
+}
+
 static void __init kernel_zimage_load(struct kernel_info *info)
 {
     paddr_t load_addr = kernel_zimage_place(info);

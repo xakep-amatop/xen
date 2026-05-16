@@ -306,8 +306,17 @@ static bool __init allocate_hwdom_memory(struct kernel_info *kinfo)
          * fit the kernel, DTB and initrd.  Skip small regions to avoid
          * ending up with a tiny first bank.
          */
-        if ( !mem->nr_banks && (hwdom_free_mem->bank[i].size < min_bank_size) )
-            continue;
+        if ( !mem->nr_banks )
+        {
+            paddr_t first_bank_size = min_bank_size;
+
+            first_bank_size = max(first_bank_size,
+                                  arch_get_minimum_first_bank_size(
+                                      kinfo, hwdom_free_mem->bank[i].start));
+
+            if ( hwdom_free_mem->bank[i].size < first_bank_size )
+                continue;
+        }
 
         bank_size = MIN(hwdom_free_mem->bank[i].size, kinfo->unassigned_mem);
         if ( !allocate_bank_memory(kinfo,

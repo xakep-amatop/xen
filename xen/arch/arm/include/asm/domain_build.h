@@ -19,6 +19,16 @@ int prepare_acpi(struct domain *d, struct kernel_info *kinfo);
 
 int add_ext_regions(unsigned long s_gfn, unsigned long e_gfn, void *data);
 
+paddr_t dom0_get_fdt_size_hint(void);
+#ifdef CONFIG_ACPI
+paddr_t acpi_get_dom0_fdt_size_hint(void);
+#else
+static inline paddr_t acpi_get_dom0_fdt_size_hint(void)
+{
+    return 0;
+}
+#endif
+
 #if defined(CONFIG_MPU) && defined(CONFIG_ARM_64)
 /* Utility function to determine if an Armv8-R processor supports VMSA. */
 bool has_v8r_vmsa_support(void);

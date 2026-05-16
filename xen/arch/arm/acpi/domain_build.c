@@ -28,6 +28,11 @@
 
 #define ACPI_DOM0_FDT_MIN_SIZE 4096
 
+paddr_t __init acpi_get_dom0_fdt_size_hint(void)
+{
+    return ACPI_DOM0_FDT_MIN_SIZE;
+}
+
 static int __init acpi_iomem_deny_access(struct domain *d)
 {
     acpi_status status;
