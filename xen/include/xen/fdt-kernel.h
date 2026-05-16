@@ -93,6 +93,15 @@ kernel_info_get_mem_const(const struct kernel_info *kinfo)
     return container_of(&kinfo->mem.common, const struct membanks, common);
 }
 
+#ifndef arch_first_bank_can_fit_boot_modules
+static inline bool
+arch_first_bank_can_fit_boot_modules(const struct kernel_info *info,
+                                     paddr_t bank_start, paddr_t bank_size)
+{
+    return true;
+}
+#endif
+
 #ifndef KERNEL_INFO_SHM_MEM_INIT
 
 #ifdef CONFIG_STATIC_SHM
