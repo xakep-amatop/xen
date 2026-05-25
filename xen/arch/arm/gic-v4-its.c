@@ -120,6 +120,23 @@ static bool gicv4_1_has_default_db(void)
     return false;
 }
 
+bool gicv4_its_doorbell_requires_mask(void)
+{
+    /*
+     * GICv4.1 default doorbells are armed through GICR_VPENDBASER.DB when
+     * a blocked vPE is made non-resident. The blocked deschedule path should
+     * arm that bit, and the doorbell interrupt handler only needs to record
+     * PendingLast and kick the vCPU. Masking or unmasking the host doorbell
+     * LPI at run time would force ITS commands into these paths.
+     *
+     * Keep the legacy mask/invalidate flow for GICv4.0 and for diagnostic
+     * GICv4.1 individual-doorbell mode, where the per-event doorbell behaves
+     * like the GICv4.0 mechanism.
+     */
+    return !gic_has_v4_1_extension() ||
+           gicv4_1_doorbell_mode == GICV4_1_DB_INDIVIDUAL;
+}
+
 /* Per-redistributor GICv4.1 VPE table sharing group. */
 DEFINE_PER_CPU(cpumask_t *, vpe_table_mask);
 #define vpe_table_mask_cpu(cpu) (per_cpu(vpe_table_mask, cpu))
@@ -2163,7 +2180,7 @@ void vgic_v4_put(struct vcpu *vcpu, bool need_db)
     {
         bool req_default_db = need_db && gicv4_1_has_default_db();
 
-        if ( need_db )
+        if ( need_db && gicv4_its_doorbell_requires_mask() )
             its_vpe_unmask_db(vpe);
 
         if ( !its_make_vpe_4_1_non_resident(vpe, vcpu->processor,

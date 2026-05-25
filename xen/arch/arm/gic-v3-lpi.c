@@ -236,8 +236,13 @@ void gicv3_do_LPI(unsigned int lpi)
             goto unlock;
         }
 
-        /* We got the message, no need to fire again */
-        its_vpe_mask_db(vpe);
+        /*
+         * GICv4.1 default doorbells are re-armed by the next blocked
+         * deschedule through GICR_VPENDBASER.DB. Mask only doorbell modes
+         * that still require the legacy explicit mask/invalidate flow.
+         */
+        if ( gicv4_its_doorbell_requires_mask() )
+            its_vpe_mask_db(vpe);
 
         /*
          * Update the pending_last flag that indicates that VLPIs are pending.
