@@ -13,6 +13,8 @@ config ARM_64
 	select HAS_ITS
 	select GICV4
 	select UNSUPPORTED
+	select PERF_COUNTERS
+	select PERF_ARRAYS
 
 config ARM
 	def_bool y

@@ -12,6 +12,7 @@
 #include <xen/lib.h>
 #include <xen/mm.h>
 #include <xen/param.h>
+#include <xen/perfc.h>
 #include <xen/sched.h>
 #include <xen/sizes.h>
 #include <xen/warning.h>
@@ -43,6 +44,14 @@ union host_lpi {
         uint16_t db_vcpu_id;
     };
 };
+
+#define GICV4_DB_DBG(fmt, ...)                                             \
+    do {                                                                   \
+        static unsigned int __count;                                       \
+                                                                           \
+        if ( __count++ < 128 )                                             \
+            printk(XENLOG_INFO "GICv4-DB: " fmt, ##__VA_ARGS__);           \
+    } while ( 0 )
 
 #define LPI_PROPTABLE_NEEDS_FLUSHING    (1U << 0)
 
@@ -168,6 +177,7 @@ void gicv3_do_LPI(unsigned int lpi)
     union host_lpi *hlpip, hlpi;
 
     irq_enter();
+    perfc_incr(lpi_traps);
 
     /* EOI the LPI already. */
     WRITE_SYSREG(lpi, ICC_EOIR1_EL1);
@@ -178,6 +188,9 @@ void gicv3_do_LPI(unsigned int lpi)
         goto out;
 
     hlpi.data = read_u64_atomic(&hlpip->data);
+    GICV4_DB_DBG("LPI trap lpi=%u dom=%u virt=%u db_vcpu=%u raw=%016llx\n",
+                 lpi, hlpi.dom_id, hlpi.virt_lpi, hlpi.db_vcpu_id,
+                 (unsigned long long)hlpi.data);
 
     /*
      * Unmapped events are marked with an invalid LPI ID. We can safely
@@ -195,10 +208,36 @@ void gicv3_do_LPI(unsigned int lpi)
     if ( hlpi.db_vcpu_id != INVALID_VCPU_ID )
     {
 #ifdef CONFIG_GICV4
-        struct vcpu *v = d->vcpu[hlpi.db_vcpu_id];
+        struct vcpu *v;
+        struct its_vpe *vpe;
+
+        perfc_incr(lpi_doorbells);
+        GICV4_DB_DBG("doorbell trap lpi=%u d%u vcpu=%u\n",
+                     lpi, d->domain_id, hlpi.db_vcpu_id);
+
+        if ( hlpi.db_vcpu_id >= d->max_vcpus )
+        {
+            printk_once(XENLOG_WARNING
+                        "Ignoring doorbell LPI %u for d%u with invalid vcpu%u\n",
+                        lpi, d->domain_id, hlpi.db_vcpu_id);
+            goto unlock;
+        }
+
+        v = d->vcpu[hlpi.db_vcpu_id];
+        if ( !v )
+            goto unlock;
+
+        vpe = v->arch.vgic.its_vpe;
+        if ( !vpe )
+        {
+            printk_once(XENLOG_WARNING
+                        "Ignoring doorbell LPI %u for d%u vcpu%u without VPE state\n",
+                        lpi, d->domain_id, hlpi.db_vcpu_id);
+            goto unlock;
+        }
 
         /* We got the message, no need to fire again */
-        its_vpe_mask_db(v->arch.vgic.its_vpe);
+        its_vpe_mask_db(vpe);
 
         /*
          * Update the pending_last flag that indicates that VLPIs are pending.
@@ -208,6 +247,7 @@ void gicv3_do_LPI(unsigned int lpi)
 
         vcpu_kick(v);
 #else
+        perfc_incr(lpi_doorbells);
         printk(XENLOG_WARNING
                "Doorbell LPI is only supported on GICv4\n");
 #endif
@@ -227,6 +267,7 @@ void gicv3_do_LPI(unsigned int lpi)
         vgic_vcpu_inject_lpi(d, hlpi.virt_lpi);
     }
 
+unlock:
     rcu_unlock_domain(d);
 
 out:
@@ -237,7 +278,11 @@ void gicv3_lpi_update_host_entry(uint32_t host_lpi, int domain_id,
                                  uint32_t virt_lpi, bool is_db,
                                  uint16_t db_vcpu_id)
 {
-    union host_lpi *hlpip, hlpi;
+    union host_lpi *hlpip, hlpi = {
+        .virt_lpi = INVALID_LPI,
+        .dom_id = domain_id,
+        .db_vcpu_id = INVALID_VCPU_ID,
+    };
 
     ASSERT(host_lpi >= LPI_OFFSET);
 
@@ -246,17 +291,15 @@ void gicv3_lpi_update_host_entry(uint32_t host_lpi, int domain_id,
     hlpip = &lpi_data.host_lpis[host_lpi / HOST_LPIS_PER_PAGE][host_lpi % HOST_LPIS_PER_PAGE];
 
     if ( !is_db )
-    {
         hlpi.virt_lpi = virt_lpi;
-        hlpi.dom_id = domain_id;
-    }
     else
-    {
-        hlpi.dom_id = domain_id;
         hlpi.db_vcpu_id = db_vcpu_id;
-    }
 
     write_u64_atomic(&hlpip->data, hlpi.data);
+    if ( is_db )
+        GICV4_DB_DBG("host entry db_lpi=%u d%d vcpu=%u raw=%016llx\n",
+                     host_lpi + LPI_OFFSET, domain_id, db_vcpu_id,
+                     (unsigned long long)hlpi.data);
 }
 
 struct page_info *lpi_allocate_pendtable(void)
