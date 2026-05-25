@@ -25,6 +25,7 @@
 #include <xen/init.h>
 #include <xen/lib.h>
 #include <xen/mm.h>
+#include <xen/param.h>
 #include <xen/sched.h>
 #include <xen/spinlock.h>
 #include <asm/gic_v3_defs.h>
@@ -55,6 +56,69 @@ static struct {
     struct its_vpe **vpes;
     int next_victim;
 } vpe_proxy;
+
+enum gicv4_1_doorbell_mode {
+    GICV4_1_DB_AUTO,
+    GICV4_1_DB_DEFAULT,
+    GICV4_1_DB_INDIVIDUAL,
+};
+
+static enum gicv4_1_doorbell_mode __read_mostly gicv4_1_doorbell_mode =
+    GICV4_1_DB_AUTO;
+
+static int __init cf_check parse_gicv4_1_doorbell(const char *s)
+{
+    if ( !strcmp(s, "auto") )
+        gicv4_1_doorbell_mode = GICV4_1_DB_AUTO;
+    else if ( !strcmp(s, "default") )
+        gicv4_1_doorbell_mode = GICV4_1_DB_DEFAULT;
+    else if ( !strcmp(s, "individual") )
+        gicv4_1_doorbell_mode = GICV4_1_DB_INDIVIDUAL;
+    else
+        return -EINVAL;
+
+    return 0;
+}
+custom_param("gicv4_1_doorbell", parse_gicv4_1_doorbell);
+
+void __init gicv4_1_set_individual_db_support(bool supported)
+{
+    if ( !supported && gicv4_1_doorbell_mode == GICV4_1_DB_INDIVIDUAL )
+        printk_once(XENLOG_WARNING
+                    "GICv4.1: individual doorbells requested but GITS_TYPER.nID=1, using default doorbells where required\n");
+}
+
+static bool gicv4_1_use_individual_db(const struct host_its *its)
+{
+    return its->is_v4_1 &&
+           gicv4_1_doorbell_mode == GICV4_1_DB_INDIVIDUAL &&
+           its->has_v4_1_individual_db;
+}
+
+static uint32_t gicv4_1_default_db_lpi(const struct host_its *its,
+                                       const struct its_vpe *vpe)
+{
+    if ( gicv4_1_use_individual_db(its) )
+        return INVALID_DBLPI;
+
+    return vpe->vpe_db_lpi;
+}
+
+static bool gicv4_1_has_default_db(void)
+{
+    struct host_its *its;
+
+    if ( gicv4_1_doorbell_mode != GICV4_1_DB_INDIVIDUAL )
+        return true;
+
+    list_for_each_entry(its, &host_its_list, entry)
+    {
+        if ( its->is_v4_1 && !its->has_v4_1_individual_db )
+            return true;
+    }
+
+    return false;
+}
 
 /* Per-redistributor GICv4.1 VPE table sharing group. */
 DEFINE_PER_CPU(cpumask_t *, vpe_table_mask);
@@ -289,6 +353,7 @@ static int its_send_cmd_vmapp(struct host_its *its, struct its_vpe *vpe,
     uint64_t cmd[4];
     uint16_t vpeid = vpe->vpe_id;
     uint64_t vpt_addr, vprop_addr;
+    uint32_t db_lpi = INVALID_DBLPI;
     bool alloc = false, ptz;
     int ret;
 
@@ -328,12 +393,13 @@ static int its_send_cmd_vmapp(struct host_its *its, struct its_vpe *vpe,
     ptz = false;
     cmd[0] |= ptz ? GITS_PTZ_BIT : 0;
 
-    cmd[1] |= (uint64_t)vpe->vpe_db_lpi;
+    db_lpi = gicv4_1_default_db_lpi(its, vpe);
+    cmd[1] |= (uint64_t)db_lpi;
 
  out:
     if ( its->is_v4_1 )
-        GICV4_DB_DBG("VMAPP valid=%u vpeid=%u col=%u db_lpi=%u alloc=%u vmapp_count=%d cmd=%016llx/%016llx/%016llx/%016llx\n",
-                     valid, vpeid, vpe->col_idx, vpe->vpe_db_lpi,
+        GICV4_DB_DBG("VMAPP valid=%u vpeid=%u col=%u default_db_lpi=%u alloc=%u vmapp_count=%d cmd=%016llx/%016llx/%016llx/%016llx\n",
+                     valid, vpeid, vpe->col_idx, db_lpi,
                      valid ? alloc : false, atomic_read(&vpe->vmapp_count),
                      (unsigned long long)cmd[0],
                      (unsigned long long)cmd[1],
@@ -642,7 +708,9 @@ static int its_vpe_init(struct its_vpe *vpe)
 
 static void encode_vmovp_v4_1(uint64_t *cmd, uint32_t default_db_pintid)
 {
-    cmd[2] |= GITS_DB_BIT;
+    if ( default_db_pintid != INVALID_DBLPI )
+        cmd[2] |= GITS_DB_BIT;
+
     cmd[3] |= default_db_pintid;
 }
 
@@ -664,9 +732,11 @@ static int its_send_cmd_vmovp(struct its_vpe *vpe)
 
         if ( hw_its->is_v4_1 )
         {
-            encode_vmovp_v4_1(cmd, vpe->vpe_db_lpi);
-            GICV4_DB_DBG("VMOVP single vpeid=%u col=%u db_lpi=%u cmd=%016llx/%016llx/%016llx/%016llx\n",
-                         vpeid, vpe->col_idx, vpe->vpe_db_lpi,
+            uint32_t db_lpi = gicv4_1_default_db_lpi(hw_its, vpe);
+
+            encode_vmovp_v4_1(cmd, db_lpi);
+            GICV4_DB_DBG("VMOVP single vpeid=%u col=%u default_db_lpi=%u cmd=%016llx/%016llx/%016llx/%016llx\n",
+                         vpeid, vpe->col_idx, db_lpi,
                          (unsigned long long)cmd[0],
                          (unsigned long long)cmd[1],
                          (unsigned long long)cmd[2],
@@ -700,9 +770,11 @@ static int its_send_cmd_vmovp(struct its_vpe *vpe)
 
         if ( hw_its->is_v4_1 )
         {
-            encode_vmovp_v4_1(cmd, vpe->vpe_db_lpi);
-            GICV4_DB_DBG("VMOVP list vpeid=%u col=%u db_lpi=%u seq=%u cmd=%016llx/%016llx/%016llx/%016llx\n",
-                         vpeid, vpe->col_idx, vpe->vpe_db_lpi,
+            uint32_t db_lpi = gicv4_1_default_db_lpi(hw_its, vpe);
+
+            encode_vmovp_v4_1(cmd, db_lpi);
+            GICV4_DB_DBG("VMOVP list vpeid=%u col=%u default_db_lpi=%u seq=%u cmd=%016llx/%016llx/%016llx/%016llx\n",
+                         vpeid, vpe->col_idx, db_lpi,
                          vmovp_seq_num,
                          (unsigned long long)cmd[0],
                          (unsigned long long)cmd[1],
@@ -1072,8 +1144,12 @@ static int its_send_cmd_vmapti(struct host_its *its, struct its_device *dev,
     uint16_t vpeid = vpe->vpe_id;
     uint32_t vintid = map->vintid;
     uint32_t db_pintid;
+    bool db_enabled = map->db_enabled;
 
-    if ( map->db_enabled )
+    if ( its->is_v4_1 && !gicv4_1_use_individual_db(its) )
+        db_enabled = false;
+
+    if ( db_enabled )
         db_pintid = vpe->vpe_db_lpi;
     else
         db_pintid = INVALID_DBLPI;
@@ -1084,7 +1160,7 @@ static int its_send_cmd_vmapti(struct host_its *its, struct its_device *dev,
     cmd[3] = 0x00;
 
     GICV4_DB_DBG("VMAPTI dev=%x event=%u vpeid=%u vintid=%u db_enabled=%u db_pintid=%u cmd=%016llx/%016llx/%016llx/%016llx\n",
-                 deviceid, map->eventid, vpeid, vintid, map->db_enabled,
+                 deviceid, map->eventid, vpeid, vintid, db_enabled,
                  db_pintid, (unsigned long long)cmd[0],
                  (unsigned long long)cmd[1], (unsigned long long)cmd[2],
                  (unsigned long long)cmd[3]);
@@ -1121,19 +1197,23 @@ static int its_send_cmd_vmovi(struct host_its *its,
     uint32_t deviceid = dev->host_devid;
     uint16_t vpeid = vpe->vpe_id;
     uint32_t db_pintid;
+    bool db_enabled = map->db_enabled;
 
-    if ( map->db_enabled )
+    if ( its->is_v4_1 && !gicv4_1_use_individual_db(its) )
+        db_enabled = false;
+
+    if ( db_enabled )
         db_pintid = vpe->vpe_db_lpi;
     else
-        db_pintid = INVALID_IRQ;
+        db_pintid = INVALID_DBLPI;
 
     cmd[0] = GITS_CMD_VMOVI | ((uint64_t)deviceid << 32);
     cmd[1] = eventid | ((uint64_t)vpeid << 32);
-    cmd[2] = (map->db_enabled ? 1UL : 0UL) | ((uint64_t)db_pintid << 32);
+    cmd[2] = (db_enabled ? 1UL : 0UL) | ((uint64_t)db_pintid << 32);
     cmd[3] = 0x00;
 
     GICV4_DB_DBG("VMOVI dev=%x event=%u vpeid=%u db_enabled=%u db_pintid=%u cmd=%016llx/%016llx/%016llx/%016llx\n",
-                 deviceid, eventid, vpeid, map->db_enabled, db_pintid,
+                 deviceid, eventid, vpeid, db_enabled, db_pintid,
                  (unsigned long long)cmd[0], (unsigned long long)cmd[1],
                  (unsigned long long)cmd[2], (unsigned long long)cmd[3]);
 
@@ -2081,7 +2161,13 @@ void vgic_v4_put(struct vcpu *vcpu, bool need_db)
 
     if ( gic_has_v4_1_extension() )
     {
-        if ( !its_make_vpe_4_1_non_resident(vpe, vcpu->processor, need_db) )
+        bool req_default_db = need_db && gicv4_1_has_default_db();
+
+        if ( need_db )
+            its_vpe_unmask_db(vpe);
+
+        if ( !its_make_vpe_4_1_non_resident(vpe, vcpu->processor,
+                                             req_default_db) )
             return;
 
         vpe->resident = false;

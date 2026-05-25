@@ -73,6 +73,7 @@
 #define GITS_TYPER_VMOVP                (1UL << 37)
 #define GITS_TYPER_VMAPP                (1UL << 40)
 #define GITS_TYPER_SVPET                GENMASK(42, 41)
+#define GITS_TYPER_NID                  BIT(43, UL)
 #define GITS_BASER_INDIRECT             BIT(62, UL)
 #define GITS_BASER_VALID                BIT(63, UL)
 #define GITS_BASER_INNER_CACHEABILITY_SHIFT        59
@@ -216,6 +217,7 @@ struct host_its {
     struct its_baser tables[GITS_BASER_NR_REGS];
     bool has_vlpis;
     bool is_v4_1;
+    bool has_v4_1_individual_db;
     uint32_t mpidr;
 };
 

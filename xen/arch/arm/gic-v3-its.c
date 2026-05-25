@@ -771,6 +771,8 @@ static int gicv3_its_init_single_its(struct host_its *hw_its)
     hw_its->evid_bits = GITS_TYPER_EVENT_ID_BITS(reg);
     hw_its->itte_size = GITS_TYPER_ITT_SIZE(reg);
     hw_its->is_v4_1 = !!(reg & GITS_TYPER_VMAPP);
+    hw_its->has_v4_1_individual_db = hw_its->is_v4_1 &&
+                                      !(reg & GITS_TYPER_NID);
     if ( reg & GITS_TYPER_PTA )
         hw_its->flags |= HOST_ITS_USES_PTA;
     if ( hw_its->has_vlpis )
@@ -792,9 +794,14 @@ static int gicv3_its_init_single_its(struct host_its *hw_its)
     {
         uint32_t svpet = FIELD_GET(GITS_TYPER_SVPET, reg);
 
+#ifdef CONFIG_GICV4
+        gicv4_1_set_individual_db_support(hw_its->has_v4_1_individual_db);
+#endif
         hw_its->mpidr = readl_relaxed(hw_its->its_base + GITS_MPIDR);
-        printk(XENLOG_INFO "ITS@%lx: using GICv4.1 mode mpidr=%#x svpet=%#x\n",
-               hw_its->addr, hw_its->mpidr, svpet);
+        printk(XENLOG_INFO
+               "ITS@%lx: using GICv4.1 mode mpidr=%#x svpet=%#x individual-db=%u\n",
+               hw_its->addr, hw_its->mpidr, svpet,
+               hw_its->has_v4_1_individual_db);
     }
     spin_lock_init(&hw_its->cmd_lock);
 

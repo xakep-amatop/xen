@@ -1329,6 +1329,36 @@ selective CR4 writes are not supported/enabled by the hypervisor, or in any
 virtualised case using shadow paging.  These are not easy for Xen to spot, so
 are not accounted for in the default setting.
 
+### gicv4_1_doorbell (arm)
+> `= auto | default | individual`
+
+> Default: `auto`
+
+Select the GICv4.1 doorbell mechanism used by Xen.
+
+`auto` and `default` use the GICv4.1 default doorbell pINTID supplied by
+`VMAPP`/`VMOVP`, and program the per-event `VMAPTI`/`VMOVI` doorbell field as
+spurious.
+
+`individual` requests the GICv4.0-style per-event doorbell path on GICv4.1.
+This is only effective when the ITS reports `GITS_TYPER.nID == 0`. If the
+hardware reports `GITS_TYPER.nID == 1`, Xen falls back to default doorbells.
+This mode is intended for testing the individual doorbell path; virtual SGIs
+do not generate individual doorbells.
+
+### gicv4_direct_lpi (arm)
+> `= <boolean>`
+
+> Default: `true`
+
+Enable Xen's GICv4 direct LPI/vLPI path when the hardware advertises the
+required support.
+
+Disabling this option makes Xen ignore the DirectLPI and Valid+Dirty
+capabilities for the GICv4 runtime path.  This is intended as a diagnostic
+switch when comparing direct invalidation and legacy ITS command based flows.
+It should not be disabled for normal GICv4 operation.
+
 ### guest_loglvl
 > `= <level>[/<rate-limited level>]` where level is `none | error | warning | info | debug | all`
 
