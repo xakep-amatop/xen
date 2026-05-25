@@ -69,6 +69,14 @@ static int vpe_to_cpuid_lock(struct its_vpe *vpe, unsigned long *flags);
 static void vpe_to_cpuid_unlock(struct its_vpe *vpe, unsigned long *flags);
 static void encode_vmovp_v4_1(uint64_t *cmd, uint32_t default_db_pintid);
 
+#define GICV4_DB_DBG(fmt, ...)                                             \
+    do {                                                                   \
+        static unsigned int __count;                                       \
+                                                                           \
+        if ( __count++ < 256 )                                             \
+            printk(XENLOG_INFO "GICv4-DB: " fmt, ##__VA_ARGS__);           \
+    } while ( 0 )
+
 void __init gicv4_its_vpeid_allocator_init(void)
 {
     /* Allocate space for vpeid_mask based on MAX_VPEID */
@@ -281,7 +289,7 @@ static int its_send_cmd_vmapp(struct host_its *its, struct its_vpe *vpe,
     uint64_t cmd[4];
     uint16_t vpeid = vpe->vpe_id;
     uint64_t vpt_addr, vprop_addr;
-    bool alloc, ptz;
+    bool alloc = false, ptz;
     int ret;
 
     cmd[0] = GITS_CMD_VMAPP;
@@ -323,6 +331,15 @@ static int its_send_cmd_vmapp(struct host_its *its, struct its_vpe *vpe,
     cmd[1] |= (uint64_t)vpe->vpe_db_lpi;
 
  out:
+    if ( its->is_v4_1 )
+        GICV4_DB_DBG("VMAPP valid=%u vpeid=%u col=%u db_lpi=%u alloc=%u vmapp_count=%d cmd=%016llx/%016llx/%016llx/%016llx\n",
+                     valid, vpeid, vpe->col_idx, vpe->vpe_db_lpi,
+                     valid ? alloc : false, atomic_read(&vpe->vmapp_count),
+                     (unsigned long long)cmd[0],
+                     (unsigned long long)cmd[1],
+                     (unsigned long long)cmd[2],
+                     (unsigned long long)cmd[3]);
+
     ret = its_send_command(its, cmd);
 
     return ret;
@@ -646,7 +663,15 @@ static int its_send_cmd_vmovp(struct its_vpe *vpe)
         cmd[3] = 0x00;
 
         if ( hw_its->is_v4_1 )
+        {
             encode_vmovp_v4_1(cmd, vpe->vpe_db_lpi);
+            GICV4_DB_DBG("VMOVP single vpeid=%u col=%u db_lpi=%u cmd=%016llx/%016llx/%016llx/%016llx\n",
+                         vpeid, vpe->col_idx, vpe->vpe_db_lpi,
+                         (unsigned long long)cmd[0],
+                         (unsigned long long)cmd[1],
+                         (unsigned long long)cmd[2],
+                         (unsigned long long)cmd[3]);
+        }
 
         return its_send_command(hw_its, cmd);
     }
@@ -674,7 +699,16 @@ static int its_send_cmd_vmovp(struct its_vpe *vpe)
         cmd[3] = 0x00;
 
         if ( hw_its->is_v4_1 )
+        {
             encode_vmovp_v4_1(cmd, vpe->vpe_db_lpi);
+            GICV4_DB_DBG("VMOVP list vpeid=%u col=%u db_lpi=%u seq=%u cmd=%016llx/%016llx/%016llx/%016llx\n",
+                         vpeid, vpe->col_idx, vpe->vpe_db_lpi,
+                         vmovp_seq_num,
+                         (unsigned long long)cmd[0],
+                         (unsigned long long)cmd[1],
+                         (unsigned long long)cmd[2],
+                         (unsigned long long)cmd[3]);
+        }
 
         ret = its_send_command(hw_its, cmd);
         if ( ret )
@@ -785,6 +819,11 @@ static int its_vpe_send_4_1_inv_db(struct host_its *its, struct its_vpe *vpe)
     if ( ret )
         return ret;
 
+    GICV4_DB_DBG("INVDB vpeid=%u db_lpi=%u cmd=%016llx/%016llx/%016llx/%016llx\n",
+                 vpeid, vpe->vpe_db_lpi, (unsigned long long)cmd[0],
+                 (unsigned long long)cmd[1], (unsigned long long)cmd[2],
+                 (unsigned long long)cmd[3]);
+
     return its_send_cmd_vsync(its, vpeid);
 }
 
@@ -843,6 +882,9 @@ static void its_vpe_set_db_enabled(struct its_vpe *vpe, bool enable)
     lpi_write_config(lpi_host_proptable(), vpe->vpe_db_lpi,
                      enable ? 0 : LPI_PROP_ENABLED,
                      enable ? LPI_PROP_ENABLED : 0);
+    GICV4_DB_DBG("host doorbell %s vpeid=%u db_lpi=%u col=%u resident=%u pending_last=%u\n",
+                 enable ? "unmask" : "mask", vpe->vpe_id, vpe->vpe_db_lpi,
+                 vpe->col_idx, vpe->resident, read_atomic(&vpe->pending_last));
     its_vpe_inv_db(vpe);
 }
 
@@ -1013,6 +1055,9 @@ int vgic_v4_its_vpe_init(struct vcpu *vcpu)
      */
     gicv3_lpi_update_host_entry(vpe->vpe_db_lpi, vcpu->domain->domain_id,
                                 INVALID_LPI, true, vcpu->vcpu_id);
+    GICV4_DB_DBG("vPE init d%u v%u vpeid=%u db_lpi=%u db_base=%u\n",
+                 vcpu->domain->domain_id, vcpu->vcpu_id, vpe->vpe_id,
+                 vpe->vpe_db_lpi, its_vm->db_lpi_bases[vcpuid / LPI_BLOCK]);
     its_vpe_unmask_db(vpe);
 
     return 0;
@@ -1037,6 +1082,12 @@ static int its_send_cmd_vmapti(struct host_its *its, struct its_device *dev,
     cmd[1] = map->eventid | ((uint64_t)vpeid << 32);
     cmd[2] = vintid | ((uint64_t)db_pintid << 32);
     cmd[3] = 0x00;
+
+    GICV4_DB_DBG("VMAPTI dev=%x event=%u vpeid=%u vintid=%u db_enabled=%u db_pintid=%u cmd=%016llx/%016llx/%016llx/%016llx\n",
+                 deviceid, map->eventid, vpeid, vintid, map->db_enabled,
+                 db_pintid, (unsigned long long)cmd[0],
+                 (unsigned long long)cmd[1], (unsigned long long)cmd[2],
+                 (unsigned long long)cmd[3]);
 
     return its_send_command(its, cmd);
 }
@@ -1080,6 +1131,11 @@ static int its_send_cmd_vmovi(struct host_its *its,
     cmd[1] = eventid | ((uint64_t)vpeid << 32);
     cmd[2] = (map->db_enabled ? 1UL : 0UL) | ((uint64_t)db_pintid << 32);
     cmd[3] = 0x00;
+
+    GICV4_DB_DBG("VMOVI dev=%x event=%u vpeid=%u db_enabled=%u db_pintid=%u cmd=%016llx/%016llx/%016llx/%016llx\n",
+                 deviceid, eventid, vpeid, map->db_enabled, db_pintid,
+                 (unsigned long long)cmd[0], (unsigned long long)cmd[1],
+                 (unsigned long long)cmd[2], (unsigned long long)cmd[3]);
 
     return its_send_command(its, cmd);
 }
@@ -1525,14 +1581,18 @@ static bool its_clear_vpend_valid_bits(void __iomem *vlpi_base, uint64_t clr,
 {
     void __iomem *vpendbaser = vlpi_base + GICR_VPENDBASER;
     unsigned int count = GICR_VPENDBASER_DIRTY_POLL_TIMEOUT_US;
-    uint64_t tmp;
+    uint64_t old, tmp;
 
     tmp = gits_read_vpendbaser(vpendbaser);
+    old = tmp;
     if ( tmp & GICR_VPENDBASER_Valid )
     {
         tmp &= ~clr;
         tmp |= set;
         tmp &= ~GICR_VPENDBASER_Valid;
+        GICV4_DB_DBG("VPENDBASER clear-valid old=%016llx write=%016llx clr=%016llx set=%016llx\n",
+                     (unsigned long long)old, (unsigned long long)tmp,
+                     (unsigned long long)clr, (unsigned long long)set);
         writeq_relaxed(tmp, vpendbaser);
 
         do {
@@ -1608,6 +1668,11 @@ static void its_make_vpe_4_1_resident(struct its_vpe *vpe, unsigned int cpu)
     val |= GICR_VPENDBASER_4_1_VGRP1EN;
     val |= FIELD_PREP(GICR_VPENDBASER_4_1_VPEID, vpe->vpe_id);
 
+    GICV4_DB_DBG("resident vpeid=%u cpu=%u old=%016llx write=%016llx db_lpi=%u pending_last=%u\n",
+                 vpe->vpe_id, cpu, (unsigned long long)old,
+                 (unsigned long long)val, vpe->vpe_db_lpi,
+                 read_atomic(&vpe->pending_last));
+
     gits_write_vpendbaser(val, vlpi_base + GICR_VPENDBASER);
 }
 
@@ -1615,8 +1680,14 @@ static bool its_make_vpe_4_1_non_resident(struct its_vpe *vpe,
                                           unsigned int cpu, bool req_db)
 {
     void __iomem *vlpi_base = gic_data_rdist_vlpi_base(cpu);
-    uint64_t val;
+    uint64_t val = 0;
     bool ret;
+
+    GICV4_DB_DBG("nonresident entry vpeid=%u cpu=%u req_db=%u raw=%016llx pending_last=%u\n",
+                 vpe->vpe_id, cpu, req_db,
+                 (unsigned long long)gits_read_vpendbaser(vlpi_base +
+                                                          GICR_VPENDBASER),
+                 read_atomic(&vpe->pending_last));
 
     if ( req_db )
     {
@@ -1640,6 +1711,11 @@ static bool its_make_vpe_4_1_non_resident(struct its_vpe *vpe,
             write_atomic(&vpe->pending_last,
                          !!(val & GICR_VPENDBASER_PendingLast));
     }
+
+    GICV4_DB_DBG("nonresident exit vpeid=%u cpu=%u req_db=%u ret=%u val=%016llx pending_last=%u\n",
+                 vpe->vpe_id, cpu, req_db, ret,
+                 (unsigned long long)val,
+                 read_atomic(&vpe->pending_last));
 
     return ret;
 }
@@ -1945,6 +2021,10 @@ static int gicv4_vpe_set_affinity(struct vcpu *vcpu)
     ret = gicv4_vpe_db_proxy_move(vpe, from, to);
 
  out:
+    if ( from != to || ret )
+        GICV4_DB_DBG("affinity d%u v%u vpeid=%u from=%u to=%u ret=%d\n",
+                     vcpu->domain->domain_id, vcpu->vcpu_id, vpe->vpe_id,
+                     from, to, ret);
     vpe_to_cpuid_unlock(vpe, &flags);
     return ret;
 }
@@ -1958,6 +2038,12 @@ void vgic_v4_load(struct vcpu *vcpu)
 
     if ( vpe->resident )
         return;
+
+    if ( gic_has_v4_1_extension() && vcpu->vcpu_id == 1 )
+        GICV4_DB_DBG("load d%u v%u vpeid=%u cpu=%u resident=%u pending_last=%u\n",
+                     vcpu->domain->domain_id, vcpu->vcpu_id, vpe->vpe_id,
+                     vcpu->processor, vpe->resident,
+                     read_atomic(&vpe->pending_last));
 
     /*
      * Before making the VPE resident, make sure the redistributor
@@ -1985,6 +2071,13 @@ void vgic_v4_put(struct vcpu *vcpu, bool need_db)
 
     if ( !vpe->resident )
         return;
+
+    if ( gic_has_v4_1_extension() && (need_db || vcpu->vcpu_id == 1) )
+        GICV4_DB_DBG("put d%u v%u vpeid=%u cpu=%u resident=%u need_db=%u blocked=%u pending_last=%u\n",
+                     vcpu->domain->domain_id, vcpu->vcpu_id, vpe->vpe_id,
+                     vcpu->processor, vpe->resident, need_db,
+                     test_bit(_VPF_blocked, &vcpu->pause_flags),
+                     read_atomic(&vpe->pending_last));
 
     if ( gic_has_v4_1_extension() )
     {
