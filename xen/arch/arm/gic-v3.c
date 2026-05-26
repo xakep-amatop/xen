@@ -57,11 +57,10 @@ static struct {
             .has_vpend_valid_dirty = true, .has_rvpeid = true, };
 
 /*
- * This cmdline knob disables Xen's GICv4 direct injection path as a whole.
- * Keeping only parts of the GICv4/v4.1 flow enabled leads to inconsistent
- * VPE handling during schedule-in/out.
+ * This cmdline knob enables the GICv4 direct guest delivery path.  Keep it
+ * disabled by default to make the host-LPI trap path the baseline.
  */
-static bool opt_direct_lpi = true;
+static bool opt_direct_lpi;
 boolean_param("gicv4_direct_lpi", opt_direct_lpi);
 
 bool gic_support_directLPI(void)
@@ -71,7 +70,7 @@ bool gic_support_directLPI(void)
 
 bool gic_support_vlpis(void)
 {
-    return gicv4.has_vlpis;
+    return gicv4.has_vlpis && opt_direct_lpi;
 }
 
 bool gic_support_vptValidDirty(void)

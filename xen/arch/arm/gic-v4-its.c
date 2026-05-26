@@ -64,7 +64,7 @@ enum gicv4_1_doorbell_mode {
 };
 
 static enum gicv4_1_doorbell_mode __read_mostly gicv4_1_doorbell_mode =
-    GICV4_1_DB_AUTO;
+    GICV4_1_DB_DEFAULT;
 
 static int __init cf_check parse_gicv4_1_doorbell(const char *s)
 {
@@ -586,10 +586,13 @@ static int gicv4_vpe_db_proxy_map_locked(struct its_vpe *vpe)
     return 0;
 }
 
+#define MIN_VPE_PROXY_EVENTS 128U
+
 int __init gicv4_init_vpe_proxy(void)
 {
     struct host_its *hw_its;
     uint32_t devid;
+    uint32_t nr_events = max(MIN_VPE_PROXY_EVENTS, nr_cpu_ids);
 
     if ( gic_support_directLPI() )
     {
@@ -608,7 +611,7 @@ int __init gicv4_init_vpe_proxy(void)
         return -ENODEV;
     }
 
-    vpe_proxy.vpes = xzalloc_array(struct its_vpe *, nr_cpu_ids);
+    vpe_proxy.vpes = xzalloc_array(struct its_vpe *, nr_events);
     if ( !vpe_proxy.vpes )
     {
         printk(XENLOG_ERR "ITS: Can't allocate GICv4 VPE proxy device array\n");
@@ -617,7 +620,7 @@ int __init gicv4_init_vpe_proxy(void)
 
     /* Use the last possible DevID */
     devid = BIT(hw_its->devid_bits, UL) - 1;
-    vpe_proxy.dev = its_create_device(hw_its, devid, nr_cpu_ids);
+    vpe_proxy.dev = its_create_device(hw_its, devid, nr_events);
     if ( IS_ERR(vpe_proxy.dev) )
     {
         int ret = PTR_ERR(vpe_proxy.dev);

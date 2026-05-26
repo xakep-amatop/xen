@@ -1349,15 +1349,16 @@ do not generate individual doorbells.
 ### gicv4_direct_lpi (arm)
 > `= <boolean>`
 
-> Default: `true`
+> Default: `false`
 
-Enable Xen's GICv4 direct LPI/vLPI path when the hardware advertises the
-required support.
+Enable Xen's GICv4 vLPI forwarding/direct guest delivery path when the
+hardware advertises the required support.
 
-Disabling this option makes Xen ignore the DirectLPI and Valid+Dirty
-capabilities for the GICv4 runtime path.  This is intended as a diagnostic
-switch when comparing direct invalidation and legacy ITS command based flows.
-It should not be disabled for normal GICv4 operation.
+Leaving this option disabled makes Xen ignore the vLPI, DirectLPI and
+Valid+Dirty capabilities for the GICv4 runtime path, causing device LPIs to
+use the host-LPI trap and VGIC injection flow.  This is intended as a
+diagnostic switch when comparing the GICv4 direct delivery path with the
+legacy trap-and-inject path.  Enable it for normal GICv4 operation.
 
 ### guest_loglvl
 > `= <level>[/<rate-limited level>]` where level is `none | error | warning | info | debug | all`
