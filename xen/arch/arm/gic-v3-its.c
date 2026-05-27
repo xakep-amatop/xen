@@ -53,8 +53,8 @@ struct its_device {
 
 struct its_quirk {
     const char *desc;
-    uint32_t iidr;
-    uint32_t mask;
+    bool (*match)(const struct host_its *hw_its, const void *data);
+    const void *data;
     uint32_t its_flags;
     /*
      * lpi_flags are ORed into the global host LPI policy and must only
@@ -64,11 +64,50 @@ struct its_quirk {
     uint32_t lpi_flags;
 };
 
+struct its_quirk_match_iidr {
+    uint32_t iidr;
+    uint32_t mask;
+};
+
+static bool __init gicv3_its_match_iidr(const struct host_its *hw_its,
+                                        const void *data)
+{
+    const struct its_quirk_match_iidr *match;
+    uint32_t iidr;
+
+    ASSERT(data);
+    if ( !data )
+        return false;
+
+    match = data;
+    iidr = readl_relaxed(hw_its->its_base + GITS_IIDR);
+
+    return (iidr & match->mask) == match->iidr;
+}
+
+static bool __init gicv3_its_match_quirk_gen4(const struct host_its *hw_its,
+                                              const void *data)
+{
+    if ( !hw_its->dt_node )
+        return false;
+
+    if ( !dt_machine_is_compatible("renesas,r8a779f0") &&
+         !dt_machine_is_compatible("renesas,r8a779g0") )
+        return false;
+
+    return gicv3_its_match_iidr(hw_its, data);
+}
+
+static const struct its_quirk_match_iidr rcar_gen4_iidr = {
+    .iidr = 0x0201743b,
+    .mask = 0xffffffffU,
+};
+
 static const struct its_quirk its_quirks[] = {
     {
-        .desc	= "R-Car Gen4",
-        .iidr	= 0x0201743b,
-        .mask	= 0xffffffffU,
+        .desc = "R-Car Gen4",
+        .match = gicv3_its_match_quirk_gen4,
+        .data = &rcar_gen4_iidr,
         .its_flags = GICV3_QUIRK_MEM_NC_NS | GICV3_QUIRK_MEM_32BIT_ADDR,
         .lpi_flags = GICV3_QUIRK_MEM_NC_NS | GICV3_QUIRK_MEM_32BIT_ADDR,
     },
@@ -77,18 +116,21 @@ static const struct its_quirk its_quirks[] = {
     }
 };
 
-static const struct its_quirk *__init gicv3_its_find_quirk(uint32_t iidr)
+static const struct its_quirk *__init gicv3_its_find_quirk(
+    const struct host_its *hw_its)
 {
-    const struct its_quirk *quirks = its_quirks;
+    const struct its_quirk *quirk;
 
     /*
-     * The first matching quirk wins. More specific quirks must be listed
-     * before broader IIDR-only entries.
+     * The first matching quirk wins. Entries that match a specific platform
+     * must be listed before broader IIDR-only entries.
      */
-    for ( ; quirks->desc; quirks++ )
+    for ( quirk = its_quirks; quirk->desc; quirk++ )
     {
-        if ( quirks->iidr == (quirks->mask & iidr) )
-            return quirks;
+        ASSERT(quirk->match);
+
+        if ( quirk->match && quirk->match(hw_its, quirk->data) )
+            return quirk;
     }
 
     return NULL;
@@ -96,8 +138,7 @@ static const struct its_quirk *__init gicv3_its_find_quirk(uint32_t iidr)
 
 static void __init gicv3_its_collect_quirks(struct host_its *hw_its)
 {
-    uint32_t iidr = readl_relaxed(hw_its->its_base + GITS_IIDR);
-    const struct its_quirk *quirk = gicv3_its_find_quirk(iidr);
+    const struct its_quirk *quirk = gicv3_its_find_quirk(hw_its);
 
     if ( quirk )
     {
