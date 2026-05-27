@@ -162,8 +162,8 @@ void gicv3_do_LPI(unsigned int lpi);
 int gicv3_lpi_init_rdist(void __iomem * rdist_base);
 
 /* Initialize the host structures for LPIs and the host ITSes. */
-int gicv3_lpi_init_host_lpis(unsigned int host_lpi_bits);
-int gicv3_its_init(void);
+int __init gicv3_lpi_init_host_lpis(unsigned int host_lpi_bits);
+int __init gicv3_its_init(void);
 void __init gicv3_lpi_update_host_flags(uint32_t flags);
 
 /* Store the physical address and ID for each redistributor as read from DT. */
@@ -247,12 +247,12 @@ static inline int gicv3_lpi_init_rdist(void __iomem * rdist_base)
     return -ENODEV;
 }
 
-static inline int gicv3_lpi_init_host_lpis(unsigned int host_lpi_bits)
+static inline int __init gicv3_lpi_init_host_lpis(unsigned int host_lpi_bits)
 {
     return 0;
 }
 
-static inline int gicv3_its_init(void)
+static inline int __init gicv3_its_init(void)
 {
     return 0;
 }
