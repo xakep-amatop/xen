@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
  - On Arm:
    - Support for guest suspend and resume to/from RAM via vPSCI.
      Applies only to non-hardware domain guests.
+   - Add GICv4 LPI performance counters to diagnose trap-and-inject latency.
 
 ### Removed
  - On x86:

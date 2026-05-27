@@ -2046,6 +2046,8 @@ void asmlinkage do_trap_guest_sync(struct cpu_user_regs *regs)
         } else {
             /* Block the VCPU for WFI */
             perfc_incr(trap_wfi);
+            if ( vgic_vcpu_pending_lpi(current) )
+                perfc_incr(trap_wfi_pending_lpi);
             vcpu_block_unless_event_pending(current);
         }
         advance_pc(regs, hsr);

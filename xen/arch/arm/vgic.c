@@ -16,6 +16,7 @@
 #include <xen/irq.h>
 #include <xen/sched.h>
 #include <xen/perfc.h>
+#include <xen/time.h>
 
 #include <asm/event.h>
 #include <asm/current.h>
@@ -32,6 +33,131 @@ static inline unsigned int idx_to_virq(struct domain *d, unsigned int idx)
         return espi_idx_to_intid(idx - vgic_num_irqs(d));
 
     return idx;
+}
+
+bool vgic_vcpu_pending_lpi(struct vcpu *v)
+{
+    struct pending_irq *p;
+    unsigned long flags;
+    bool pending = false;
+
+    spin_lock_irqsave(&v->arch.vgic.lock, flags);
+
+    list_for_each_entry ( p, &v->arch.vgic.inflight_irqs, inflight )
+    {
+        if ( !is_lpi(p->irq) ||
+             !test_bit(GIC_IRQ_GUEST_ENABLED, &p->status) )
+            continue;
+
+        if ( test_bit(GIC_IRQ_GUEST_QUEUED, &p->status) ||
+             !test_bit(GIC_IRQ_GUEST_VISIBLE, &p->status) )
+        {
+            pending = true;
+            break;
+        }
+    }
+
+    spin_unlock_irqrestore(&v->arch.vgic.lock, flags);
+
+    return pending;
+}
+
+static void vgic_count_lpi_inject(struct vcpu *v)
+{
+    bool running = v->is_running;
+
+    if ( test_bit(_VPF_blocked, &v->pause_flags) )
+        perfc_incr(lpi_inject_blocked);
+    else if ( running )
+        perfc_incr(lpi_inject_running);
+    else
+        perfc_incr(lpi_inject_runnable);
+
+    if ( !running && !read_atomic(&v->arch.vgic.last_lpi_inject_time) )
+        write_atomic(&v->arch.vgic.last_lpi_inject_time, NOW());
+}
+
+void vgic_count_lpi_doorbell(struct vcpu *v)
+{
+    bool running = v->is_running;
+
+    if ( test_bit(_VPF_blocked, &v->pause_flags) )
+        perfc_incr(lpi_doorbell_blocked);
+    else if ( running )
+        perfc_incr(lpi_doorbell_running);
+    else
+        perfc_incr(lpi_doorbell_runnable);
+
+    if ( !running && !read_atomic(&v->arch.vgic.last_lpi_doorbell_time) )
+        write_atomic(&v->arch.vgic.last_lpi_doorbell_time, NOW());
+}
+
+static void vgic_lpi_inject_schedule_in(struct vcpu *v)
+{
+    s_time_t start, delta;
+    unsigned int delay_us;
+
+    start = read_atomic(&v->arch.vgic.last_lpi_inject_time);
+    if ( !start )
+        return;
+
+    write_atomic(&v->arch.vgic.last_lpi_inject_time, 0);
+
+    delta = NOW() - start;
+    if ( delta < 0 )
+        return;
+
+    delay_us = min_t(uint64_t, delta / MICROSECS(1), UINT_MAX);
+    perfc_incr(lpi_kick_sched);
+    perfc_add(lpi_kick_sched_us, delay_us);
+    if ( perfc_value(lpi_kick_sched_us_max) < delay_us )
+        perfc_set(lpi_kick_sched_us_max, delay_us);
+
+    if ( delay_us < 100 )
+        perfc_incr(lpi_kick_sched_lt_100us);
+    else if ( delay_us < 1000 )
+        perfc_incr(lpi_kick_sched_lt_1ms);
+    else if ( delay_us < 10000 )
+        perfc_incr(lpi_kick_sched_lt_10ms);
+    else
+        perfc_incr(lpi_kick_sched_ge_10ms);
+}
+
+static void vgic_lpi_doorbell_schedule_in(struct vcpu *v)
+{
+    s_time_t start, delta;
+    unsigned int delay_us;
+
+    start = read_atomic(&v->arch.vgic.last_lpi_doorbell_time);
+    if ( !start )
+        return;
+
+    write_atomic(&v->arch.vgic.last_lpi_doorbell_time, 0);
+
+    delta = NOW() - start;
+    if ( delta < 0 )
+        return;
+
+    delay_us = min_t(uint64_t, delta / MICROSECS(1), UINT_MAX);
+    perfc_incr(lpi_doorbell_sched);
+    perfc_add(lpi_doorbell_sched_us, delay_us);
+    if ( perfc_value(lpi_doorbell_sched_us_max) < delay_us )
+        perfc_set(lpi_doorbell_sched_us_max, delay_us);
+
+    if ( delay_us < 100 )
+        perfc_incr(lpi_doorbell_sched_lt_100us);
+    else if ( delay_us < 1000 )
+        perfc_incr(lpi_doorbell_sched_lt_1ms);
+    else if ( delay_us < 10000 )
+        perfc_incr(lpi_doorbell_sched_lt_10ms);
+    else
+        perfc_incr(lpi_doorbell_sched_ge_10ms);
+}
+
+void vgic_lpi_schedule_in(struct vcpu *v)
+{
+    vgic_lpi_inject_schedule_in(v);
+    vgic_lpi_doorbell_schedule_in(v);
 }
 
 #ifdef CONFIG_GICV4
@@ -837,6 +963,9 @@ void vgic_inject_irq(struct domain *d, struct vcpu *v, unsigned int virq,
         spin_unlock_irqrestore(&v->arch.vgic.lock, flags);
         return;
     }
+
+    if ( is_lpi(virq) )
+        vgic_count_lpi_inject(v);
 
     set_bit(GIC_IRQ_GUEST_QUEUED, &n->status);
 

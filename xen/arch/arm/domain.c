@@ -277,6 +277,7 @@ static void schedule_tail(struct vcpu *prev)
     ctxt_switch_from(prev);
 
     ctxt_switch_to(current);
+    vgic_lpi_schedule_in(current);
 
     local_irq_enable();
 

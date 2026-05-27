@@ -24,6 +24,7 @@
 #include <asm/io.h>
 #include <asm/page.h>
 #include <asm/sysregs.h>
+#include <asm/vgic.h>
 
 /*
  * There could be a lot of LPIs on the host side, and they always go to
@@ -250,6 +251,7 @@ void gicv3_do_LPI(unsigned int lpi)
          */
         write_atomic(&v->arch.vgic.its_vpe->pending_last, true);
 
+        vgic_count_lpi_doorbell(v);
         vcpu_kick(v);
 #else
         perfc_incr(lpi_doorbells);

@@ -25,6 +25,7 @@
 #include <xen/bug.h>
 #include <xen/radix-tree.h>
 #include <xen/rbtree.h>
+#include <xen/time.h>
 
 struct pending_irq
 {
@@ -244,6 +245,8 @@ struct vgic_cpu {
     /* GICv3: redistributor base and flags for this vCPU */
     paddr_t rdist_base;
     uint64_t rdist_pendbase;
+    s_time_t last_lpi_inject_time;
+    s_time_t last_lpi_doorbell_time;
 #define VGIC_V3_RDIST_LAST      (1 << 0)        /* last vCPU of the rdist */
 #define VGIC_V3_LPIS_ENABLED    (1 << 1)
     uint8_t flags;
@@ -489,6 +492,19 @@ void vgic_sync_to_lrs(void);
 void vgic_sync_from_lrs(struct vcpu *v);
 
 int vgic_vcpu_pending_irq(struct vcpu *v);
+#ifdef CONFIG_NEW_VGIC
+static inline bool vgic_vcpu_pending_lpi(struct vcpu *v)
+{
+    return false;
+}
+
+static inline void vgic_lpi_schedule_in(struct vcpu *v) {}
+static inline void vgic_count_lpi_doorbell(struct vcpu *v) {}
+#else
+bool vgic_vcpu_pending_lpi(struct vcpu *v);
+void vgic_lpi_schedule_in(struct vcpu *v);
+void vgic_count_lpi_doorbell(struct vcpu *v);
+#endif
 
 #endif /* __ASM_ARM_VGIC_H__ */
 

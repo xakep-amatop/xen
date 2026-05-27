@@ -64,7 +64,7 @@ enum gicv4_1_doorbell_mode {
 };
 
 static enum gicv4_1_doorbell_mode __read_mostly gicv4_1_doorbell_mode =
-    GICV4_1_DB_DEFAULT;
+    GICV4_1_DB_AUTO;
 
 static int __init cf_check parse_gicv4_1_doorbell(const char *s)
 {
