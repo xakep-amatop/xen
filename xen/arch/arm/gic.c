@@ -26,6 +26,7 @@
 #include <asm/device.h>
 #include <asm/io.h>
 #include <asm/gic.h>
+#include <asm/suspend.h>
 #include <asm/vgic.h>
 #include <asm/acpi.h>
 
@@ -44,6 +45,11 @@ static void __init __maybe_unused build_assertions(void)
 void register_gic_ops(const struct gic_hw_operations *ops)
 {
     gic_hw_ops = ops;
+
+#ifdef CONFIG_SYSTEM_SUSPEND
+    if ( !ops->suspend || !ops->resume )
+        host_system_suspend_disable("GIC driver lacks suspend support");
+#endif
 }
 
 static void clear_cpu_lr_mask(void)
@@ -431,6 +437,35 @@ int gic_iomem_deny_access(struct domain *d)
 {
     return gic_hw_ops->iomem_deny_access(d);
 }
+
+#ifdef CONFIG_SYSTEM_SUSPEND
+
+int gic_suspend(void)
+{
+    /* Must be called by boot CPU#0 with interrupts disabled */
+    ASSERT(!local_irq_is_enabled());
+    ASSERT(!smp_processor_id());
+
+    if ( !gic_hw_ops->suspend || !gic_hw_ops->resume )
+        return -ENOSYS;
+
+    return gic_hw_ops->suspend();
+}
+
+void gic_resume(void)
+{
+    /*
+     * Must be called by boot CPU#0 with interrupts disabled after gic_suspend
+     * has returned successfully.
+     */
+    ASSERT(!local_irq_is_enabled());
+    ASSERT(!smp_processor_id());
+    ASSERT(gic_hw_ops->resume);
+
+    gic_hw_ops->resume();
+}
+
+#endif /* CONFIG_SYSTEM_SUSPEND */
 
 static int cpu_gic_callback(struct notifier_block *nfb,
                             unsigned long action,

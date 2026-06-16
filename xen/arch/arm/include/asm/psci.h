@@ -23,6 +23,10 @@ int call_psci_cpu_on(int cpu);
 void call_psci_cpu_off(void);
 void call_psci_system_off(void);
 void call_psci_system_reset(void);
+int call_psci_system_suspend(void);
+#ifdef CONFIG_SYSTEM_SUSPEND
+bool psci_system_suspend_allowed(void);
+#endif
 
 /* Range of allocated PSCI function numbers */
 #define	PSCI_FNUM_MIN_VALUE                 _AC(0,U)
