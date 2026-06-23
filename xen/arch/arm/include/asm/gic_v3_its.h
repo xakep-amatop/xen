@@ -44,6 +44,9 @@
 #define GITS_ALLOC_BIT                  BIT(8, UL)
 #define GITS_PTZ_BIT                    BIT(9, UL)
 #define GITS_DB_BIT                     BIT(63, UL)
+#define GITS_ENABLE_BIT                 BIT(8, UL)
+#define GITS_CLEAR_BIT                  BIT(9, UL)
+#define GITS_GROUP_BIT                  BIT(10, UL)
 #endif
 
 #define GITS_CTLR_QUIESCENT             BIT(31, UL)
@@ -207,6 +210,7 @@ struct host_its {
     paddr_t addr;
     paddr_t size;
     void __iomem *its_base;
+    void __iomem *sgir_base;
     unsigned int devid_bits;
     unsigned int evid_bits;
     unsigned int itte_size;
@@ -343,6 +347,12 @@ int gicv4_its_vlpi_unmap(struct pending_irq *pirq);
 int its_vlpi_prop_update(struct pending_irq *pirq, uint8_t property,
                          bool needs_inv);
 int gicv4_its_handle_invall(struct domain *d, struct vcpu *vcpu);
+int vgic_v4_configure_vcpu_sgi(struct vcpu *v);
+int its_sgi_get_pending_state(struct vcpu *v, uint32_t *ipending);
+int its_sgi_mask_irq(struct vcpu *v, unsigned int irq);
+int its_sgi_unmask_irq(struct vcpu *v, unsigned int irq);
+int its_sgi_set_pending_state(struct vcpu *v, unsigned int vsgi, bool state);
+int its_sgi_prop_update(struct vcpu *v, unsigned int irq, uint8_t priority);
 
 bool event_is_forwarded_to_vcpu(struct its_device *dev, uint32_t eventid);
 bool gicv4_its_doorbell_requires_mask(void);
@@ -368,6 +378,38 @@ static inline int its_vlpi_prop_update(struct pending_irq *pirq,
 }
 
 static inline int gicv4_its_handle_invall(struct domain *d, struct vcpu *vcpu)
+{
+    return -ENOSYS;
+}
+
+static inline int vgic_v4_configure_vcpu_sgi(struct vcpu *v)
+{
+    return -ENOSYS;
+}
+
+static inline int its_sgi_get_pending_state(struct vcpu *v, uint32_t *ipending)
+{
+    return -ENOSYS;
+}
+
+static inline int its_sgi_mask_irq(struct vcpu *v, unsigned int irq)
+{
+    return -ENOSYS;
+}
+
+static inline int its_sgi_unmask_irq(struct vcpu *v, unsigned int irq)
+{
+    return -ENOSYS;
+}
+
+static inline int its_sgi_set_pending_state(struct vcpu *v, unsigned int vsgi,
+                                            bool state)
+{
+    return -ENOSYS;
+}
+
+static inline int its_sgi_prop_update(struct vcpu *v, unsigned int irq,
+                                      uint8_t priority)
 {
     return -ENOSYS;
 }
@@ -448,6 +490,38 @@ static inline int gicv3_its_make_hwdom_dt_nodes(const struct domain *d,
                                                 void *fdt)
 {
     return 0;
+}
+
+static inline int vgic_v4_configure_vcpu_sgi(struct vcpu *v)
+{
+    return -ENOSYS;
+}
+
+static inline int its_sgi_get_pending_state(struct vcpu *v, uint32_t *ipending)
+{
+    return -ENOSYS;
+}
+
+static inline int its_sgi_mask_irq(struct vcpu *v, unsigned int irq)
+{
+    return -ENOSYS;
+}
+
+static inline int its_sgi_unmask_irq(struct vcpu *v, unsigned int irq)
+{
+    return -ENOSYS;
+}
+
+static inline int its_sgi_set_pending_state(struct vcpu *v, unsigned int vsgi,
+                                            bool state)
+{
+    return -ENOSYS;
+}
+
+static inline int its_sgi_prop_update(struct vcpu *v, unsigned int irq,
+                                      uint8_t priority)
+{
+    return -ENOSYS;
 }
 
 #endif /* CONFIG_HAS_ITS */
