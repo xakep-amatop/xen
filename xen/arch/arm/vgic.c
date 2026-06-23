@@ -22,6 +22,7 @@
 
 #include <asm/mmio.h>
 #include <asm/gic.h>
+#include <asm/gic_v3_defs.h>
 #include <asm/gic_v3_its.h>
 #include <asm/vgic.h>
 
@@ -255,6 +256,7 @@ int domain_vgic_init(struct domain *d, unsigned int nr_spis)
     int ret;
 
     d->arch.vgic.ctlr = 0;
+    d->arch.vgic.nassgireq = false;
 
     /*
      * The vGIC relies on having a pending_irq available for every IRQ
@@ -345,6 +347,12 @@ int domain_vgic_init(struct domain *d, unsigned int nr_spis)
             printk(XENLOG_ERR "GICv4 its vm allocation failed\n");
             return ret;
         }
+
+        if ( vgic_has_directVSGI(d) )
+        {
+            d->arch.vgic.ctlr |= GICD_CTLR_nASSGIreq;
+            d->arch.vgic.nassgireq = true;
+        }
     }
     return 0;
 }
@@ -411,7 +419,13 @@ int vcpu_vgic_init(struct vcpu *v)
     if ( ret )
         goto free_pending_irqs;
 
-    for ( i = 0; i < NR_LOCAL_IRQS; i++ )
+    for ( i = 0; i < NR_GIC_SGI; i++ )
+    {
+        vgic_init_pending_irq(&v->arch.vgic.pending_irqs[i], i);
+        v->arch.vgic.pending_irqs[i].hw = vgic_has_directVSGI(v->domain);
+    }
+
+    for ( ; i < NR_LOCAL_IRQS; i++ )
         vgic_init_pending_irq(&v->arch.vgic.pending_irqs[i], i);
 
     INIT_LIST_HEAD(&v->arch.vgic.inflight_irqs);
@@ -424,6 +438,18 @@ int vcpu_vgic_init(struct vcpu *v)
         if ( ret )
         {
             printk(XENLOG_ERR "GICv4 its vpe allocation failed\n");
+            goto free_pending_irqs;
+        }
+    }
+
+    if ( vgic_has_directVSGI(v->domain) )
+    {
+        ret = vgic_v4_configure_vcpu_sgi(v);
+        if ( ret )
+        {
+            printk(XENLOG_ERR "Failed to configure vSGIs for v%u\n",
+                   v->vcpu_id);
+            vgic_v4_its_vpe_free(v);
             goto free_pending_irqs;
         }
     }
@@ -570,7 +596,14 @@ void vgic_disable_irqs(struct vcpu *v, uint32_t r, unsigned int n)
         spin_lock_irqsave(&v_target->arch.vgic.lock, flags);
         p = irq_to_pending(v_target, irq);
         clear_bit(GIC_IRQ_GUEST_ENABLED, &p->status);
-        gic_remove_from_lr_pending(v_target, p);
+        if ( irq < NR_GIC_SGI && pirq_is_tied_to_hw(p) )
+        {
+            if ( its_sgi_mask_irq(v_target, irq) )
+                printk(XENLOG_G_ERR "%pv: vSGI: failed to mask IRQ %u\n",
+                       v, irq);
+        }
+        else
+            gic_remove_from_lr_pending(v_target, p);
         desc = p->desc;
         spin_unlock_irqrestore(&v_target->arch.vgic.lock, flags);
 
@@ -621,7 +654,14 @@ void vgic_enable_irqs(struct vcpu *v, uint32_t r, unsigned int n)
         spin_lock_irqsave(&v_target->arch.vgic.lock, flags);
         p = irq_to_pending(v_target, irq);
         set_bit(GIC_IRQ_GUEST_ENABLED, &p->status);
-        if ( !list_empty(&p->inflight) && !test_bit(GIC_IRQ_GUEST_VISIBLE, &p->status) )
+        if ( irq < NR_GIC_SGI && pirq_is_tied_to_hw(p) )
+        {
+            if ( its_sgi_unmask_irq(v_target, irq) )
+                printk(XENLOG_G_ERR "%pv: vSGI: failed to unmask IRQ %u\n",
+                       v, irq);
+        }
+        else if ( !list_empty(&p->inflight) &&
+                  !test_bit(GIC_IRQ_GUEST_VISIBLE, &p->status) )
             gic_raise_guest_irq(v_target, irq, p->priority);
         spin_unlock_irqrestore(&v_target->arch.vgic.lock, flags);
         if ( p->desc != NULL )
@@ -807,6 +847,7 @@ void vgic_inject_irq(struct domain *d, struct vcpu *v, unsigned int virq,
     uint8_t priority;
     struct pending_irq *iter, *n;
     unsigned long flags;
+    int ret;
 
     /*
      * For edge triggered interrupts we always ignore a "falling edge".
@@ -838,6 +879,29 @@ void vgic_inject_irq(struct domain *d, struct vcpu *v, unsigned int virq,
     {
         spin_unlock_irqrestore(&v->arch.vgic.lock, flags);
         return;
+    }
+
+    if ( virq < NR_GIC_SGI && pirq_is_tied_to_hw(n) )
+    {
+        ret = its_sgi_set_pending_state(v, virq, true);
+        if ( ret )
+        {
+            printk(XENLOG_G_ERR "%pv: vSGI: failed to inject IRQ %u: %d\n",
+                   v, virq, ret);
+            spin_unlock_irqrestore(&v->arch.vgic.lock, flags);
+            return;
+        }
+
+        priority = vgic_get_virq_priority(v, virq);
+        n->priority = priority;
+
+        if ( !test_bit(GIC_IRQ_GUEST_ENABLED, &n->status) )
+        {
+            spin_unlock_irqrestore(&v->arch.vgic.lock, flags);
+            return;
+        }
+
+        goto out;
     }
 
     set_bit(GIC_IRQ_GUEST_QUEUED, &n->status);
@@ -979,7 +1043,14 @@ void vgic_check_inflight_irqs_pending(struct vcpu *v, unsigned int rank, uint32_
 
         p = irq_to_pending(v_target, irq);
 
-        if ( p && !list_empty(&p->inflight) )
+        if ( p && irq < NR_GIC_SGI && pirq_is_tied_to_hw(p) )
+        {
+            if ( its_sgi_set_pending_state(v_target, irq, false) )
+                printk(XENLOG_G_ERR
+                       "%pv: vSGI: failed to clear pending IRQ %u\n",
+                       v, irq);
+        }
+        else if ( p && !list_empty(&p->inflight) )
             printk(XENLOG_G_WARNING
                    "%pv trying to clear pending interrupt %u.\n",
                    v, irq);
