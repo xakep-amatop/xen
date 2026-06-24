@@ -1218,9 +1218,12 @@ static int gicv4_its_vlpi_first_map_locked(struct its_device *dev,
 
         restore_ret = its_restore_host_mapping(dev, map->eventid);
         if ( restore_ret )
+        {
             printk(XENLOG_WARNING
                    "ITS: failed to restore host mapping after VMAPTI failure: vmapti=%d restore=%d\n",
                    ret, restore_ret);
+            return restore_ret;
+        }
 
         return ret;
     }
