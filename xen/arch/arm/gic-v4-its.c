@@ -286,7 +286,6 @@ static int its_send_cmd_vmapp(struct host_its *its, struct its_vpe *vpe,
     uint64_t cmd[4];
     uint16_t vpeid = vpe->vpe_id;
     uint64_t vpt_addr, vprop_addr;
-    bool alloc;
     int ret;
 
     cmd[0] = GITS_CMD_VMAPP;
@@ -294,14 +293,20 @@ static int its_send_cmd_vmapp(struct host_its *its, struct its_vpe *vpe,
     cmd[2] = valid ? GITS_VALID_BIT : 0;
     cmd[3] = 0;
 
+    if ( its->is_v4_1 )
+    {
+        int count = atomic_read(&vpe->vmapp_count);
+
+        if ( !valid && !count )
+            return -EINVAL;
+
+        if ( valid ? count == 0 : count == 1 )
+            cmd[0] |= GITS_ALLOC_BIT;
+    }
+
     /* Unmap command */
     if ( !valid )
-    {
-        if ( its->is_v4_1 )
-            alloc = !atomic_dec_return(&vpe->vmapp_count);
-
         goto out;
-    }
 
     /* Target redistributor */
     cmd[2] |= encode_rdbase(its, vpe->col_idx, 0x0);
@@ -312,9 +317,6 @@ static int its_send_cmd_vmapp(struct host_its *its, struct its_vpe *vpe,
     if ( !its->is_v4_1 )
         goto out;
 
-    alloc = atomic_inc_return(&vpe->vmapp_count) == 1 ? true : false;
-    cmd[0] |= alloc ? GITS_ALLOC_BIT : 0;
-
     vprop_addr = virt_to_maddr(vpe->its_vm->vproptable);
     cmd[0] |= vprop_addr & GENMASK(51, 16);
 
@@ -323,8 +325,18 @@ static int its_send_cmd_vmapp(struct host_its *its, struct its_vpe *vpe,
 
  out:
     ret = its_send_command(its, cmd);
+    if ( ret )
+        return ret;
 
-    return ret;
+    if ( its->is_v4_1 )
+    {
+        if ( valid )
+            atomic_inc(&vpe->vmapp_count);
+        else
+            (void)atomic_dec_return(&vpe->vmapp_count);
+    }
+
+    return 0;
 }
 
 static int its_send_cmd_vinvall(struct host_its *its, struct its_vpe *vpe)
