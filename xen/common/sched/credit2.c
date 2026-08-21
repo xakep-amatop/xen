@@ -3515,8 +3515,16 @@ runq_candidate(struct csched2_runqueue_data *rqd,
         /*
          * If this is on a different processor, don't pull it unless
          * its credit is at least CSCHED2_MIGRATE_RESIST higher.
+         *
+         * Never resist in favour of the idle unit though: this cpu is about
+         * to go idle, so pulling the unit is always better than leaving it
+         * in the runqueue. A unit whose credit sits at CSCHED2_CREDIT_MIN
+         * can never overcome the resistance (the floor is only 1 credit
+         * above CSCHED2_IDLE_CREDIT), and if it was tickled here while its
+         * own cpu defers to us, resisting drops the wakeup entirely.
          */
-        if ( sched_unit_master(svc->unit) != cpu
+        if ( !is_idle_unit(snext->unit)
+             && sched_unit_master(svc->unit) != cpu
              && snext->credit + CSCHED2_MIGRATE_RESIST > svc->credit )
         {
             SCHED_STAT_CRANK(migrate_resisted);
