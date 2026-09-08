@@ -2554,6 +2554,9 @@ void vgic_v4_put(struct vcpu *vcpu, bool need_db)
         }
 
         vpe->resident = false;
+        /* PendingLast suppresses the doorbell, so keep the vCPU runnable. */
+        if ( need_db && read_atomic(&vpe->pending_last) )
+            vcpu_kick(vcpu);
         return;
     }
 

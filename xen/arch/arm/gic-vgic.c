@@ -374,7 +374,14 @@ int vgic_vcpu_pending_irq(struct vcpu *v)
     }
 
 #ifdef CONFIG_GICV4
+    /*
+     * While the vPE is resident, the GIC owns its pending state. The cached
+     * PendingLast value describes a non-resident transition and may have been
+     * forced for a preemption without a doorbell. Using that stale hint here
+     * would prevent WFI from blocking and therefore from arming a doorbell.
+     */
     if ( v->arch.vgic.its_vpe &&
+         !v->arch.vgic.its_vpe->resident &&
          read_atomic(&v->arch.vgic.its_vpe->pending_last) )
         rc = 1;
 #endif
