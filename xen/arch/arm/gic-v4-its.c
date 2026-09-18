@@ -27,6 +27,7 @@
 #include <xen/mm.h>
 #include <xen/sched.h>
 #include <xen/spinlock.h>
+#include <asm/gic_bench.h>
 #include <asm/gic_v3_defs.h>
 #include <asm/gic_v3_its.h>
 #include <asm/gic_v4_its.h>
@@ -753,6 +754,9 @@ static int wait_for_syncr(void __iomem *rdbase, const char *what)
     {
         if ( !timeout-- )
         {
+            gic_bench_add(gb_syncr_busy_polls,
+                          GICR_SYNCR_POLL_TIMEOUT_US + 1);
+            gic_bench_count(gb_syncr_timeout);
             printk(XENLOG_WARNING
                    "GICv4: timeout waiting for GICR_SYNCR.Busy to clear during %s\n",
                    what);
@@ -763,6 +767,8 @@ static int wait_for_syncr(void __iomem *rdbase, const char *what)
         udelay(1);
     }
 
+    gic_bench_add(gb_syncr_busy_polls,
+                  GICR_SYNCR_POLL_TIMEOUT_US - timeout);
     return 0;
 }
 
@@ -1618,6 +1624,7 @@ int gicv4_its_handle_invall(struct domain *d, struct vcpu *vcpu)
 static int read_vpend_dirty_clean(void __iomem *vlpi_base,
                                   unsigned int count, uint64_t *val)
 {
+    const unsigned int limit __maybe_unused = count;
     uint64_t tmp;
 
     while ( true )
@@ -1626,6 +1633,7 @@ static int read_vpend_dirty_clean(void __iomem *vlpi_base,
         /* Poll GICR_VPENDBASER.Dirty until it reads 0. */
         if ( !(tmp & GICR_VPENDBASER_Dirty) )
         {
+            gic_bench_add(gb_dirty_busy_polls, limit - count);
             *val = tmp;
             return 0;
         }
@@ -1637,6 +1645,8 @@ static int read_vpend_dirty_clean(void __iomem *vlpi_base,
         udelay(1);
     }
 
+    gic_bench_add(gb_dirty_busy_polls, limit + 1);
+    gic_bench_count(gb_dirty_timeout);
     *val = tmp | GICR_VPENDBASER_PendingLast;
     printk(XENLOG_WARNING "ITS virtual pending table not totally parsed\n");
 
@@ -1681,6 +1691,9 @@ static int its_clear_vpend_valid_bits(void __iomem *vlpi_base, uint64_t clr,
         do {
             if ( !count-- )
             {
+                gic_bench_add(gb_valid_busy_polls,
+                              GICR_VPENDBASER_DIRTY_POLL_TIMEOUT_US);
+                gic_bench_count(gb_valid_timeout);
                 printk(XENLOG_WARNING
                        "GICv4: timeout clearing GICR_VPENDBASER.Valid\n");
                 return -ETIMEDOUT;
@@ -1689,6 +1702,10 @@ static int its_clear_vpend_valid_bits(void __iomem *vlpi_base, uint64_t clr,
             udelay(1);
             tmp = gits_read_vpendbaser(vpendbaser);
         } while ( tmp & GICR_VPENDBASER_Valid );
+
+        /* Exclude the last read, which observed Valid clear. */
+        gic_bench_add(gb_valid_busy_polls,
+                      GICR_VPENDBASER_DIRTY_POLL_TIMEOUT_US - count - 1);
     }
 
     ret = read_vpend_dirty_clean(vlpi_base,
@@ -2462,9 +2479,14 @@ static int gicv4_vpe_set_affinity(struct vcpu *vcpu)
          * the old redistributor target.
          */
         vpe->col_idx = from;
+        gic_bench_count(gb_vpe_move_err);
         goto out;
     }
+    /* The VMOVP submission succeeded; this is not a completion barrier. */
+    gic_bench_count(gb_vpe_move_ok);
     ret = gicv4_vpe_db_proxy_move(vpe, from, to);
+    if ( ret )
+        gic_bench_count(gb_db_move_err);
 
  out:
     vpe_to_cpuid_unlock(vpe, &flags);
@@ -2489,6 +2511,7 @@ void vgic_v4_load(struct vcpu *vcpu)
     ret = gicv4_vpe_set_affinity(vcpu);
     if ( ret )
     {
+        gic_bench_count(gb_vpe_load_err);
         printk(XENLOG_WARNING
                "%pv: GICv4 failed to retarget vPE before load: %d\n",
                vcpu, ret);
@@ -2500,6 +2523,7 @@ void vgic_v4_load(struct vcpu *vcpu)
         ret = its_make_vpe_4_1_resident(vpe, vcpu->processor);
         if ( ret )
         {
+            gic_bench_count(gb_vpe_load_err);
             printk(XENLOG_WARNING
                    "%pv: GICv4.1 failed to make vPE resident: %d\n",
                    vcpu, ret);
@@ -2507,12 +2531,14 @@ void vgic_v4_load(struct vcpu *vcpu)
         }
 
         vpe->resident = true;
+        gic_bench_count(gb_vpe_load_ok);
         return;
     }
 
     ret = its_vpe_mask_db(vpe);
     if ( ret )
     {
+        gic_bench_count(gb_vpe_load_err);
         printk(XENLOG_WARNING
                "%pv: GICv4 failed to mask vPE doorbell before load: %d\n",
                vcpu, ret);
@@ -2522,6 +2548,7 @@ void vgic_v4_load(struct vcpu *vcpu)
     ret = its_make_vpe_resident(vpe, vcpu->processor);
     if ( ret )
     {
+        gic_bench_count(gb_vpe_load_err);
         printk(XENLOG_WARNING
                "%pv: GICv4 failed to make vPE resident: %d\n",
                vcpu, ret);
@@ -2529,6 +2556,7 @@ void vgic_v4_load(struct vcpu *vcpu)
     }
 
     vpe->resident = true;
+    gic_bench_count(gb_vpe_load_ok);
 }
 
 void vgic_v4_put(struct vcpu *vcpu, bool need_db)
@@ -2547,6 +2575,7 @@ void vgic_v4_put(struct vcpu *vcpu, bool need_db)
         ret = its_make_vpe_4_1_non_resident(vpe, vcpu->processor, need_db);
         if ( ret )
         {
+            gic_bench_count(gb_vpe_put_err);
             printk(XENLOG_WARNING
                    "%pv: GICv4.1 failed to make vPE non-resident: %d\n",
                    vcpu, ret);
@@ -2554,15 +2583,23 @@ void vgic_v4_put(struct vcpu *vcpu, bool need_db)
         }
 
         vpe->resident = false;
+        if ( need_db )
+            gic_bench_count(gb_vpe_put_db);
+        else
+            gic_bench_count(gb_vpe_put_nodb);
         /* PendingLast suppresses the doorbell, so keep the vCPU runnable. */
         if ( need_db && read_atomic(&vpe->pending_last) )
+        {
+            gic_bench_count(gb_pendinglast_kick);
             vcpu_kick(vcpu);
+        }
         return;
     }
 
     ret = its_make_vpe_non_resident(vpe, vcpu->processor);
     if ( ret )
     {
+        gic_bench_count(gb_vpe_put_err);
         printk(XENLOG_WARNING
                "%pv: GICv4 failed to make vPE non-resident: %d\n",
                vcpu, ret);
@@ -2570,6 +2607,10 @@ void vgic_v4_put(struct vcpu *vcpu, bool need_db)
     }
 
     vpe->resident = false;
+    if ( need_db )
+        gic_bench_count(gb_vpe_put_db);
+    else
+        gic_bench_count(gb_vpe_put_nodb);
 
     if ( need_db )
     {
@@ -2577,6 +2618,7 @@ void vgic_v4_put(struct vcpu *vcpu, bool need_db)
         ret = its_vpe_unmask_db(vpe);
         if ( ret )
         {
+            gic_bench_count(gb_vpe_put_err);
             printk(XENLOG_WARNING
                    "%pv: GICv4 failed to unmask vPE doorbell: %d\n",
                    vcpu, ret);

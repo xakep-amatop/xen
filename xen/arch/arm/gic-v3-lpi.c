@@ -20,11 +20,17 @@
 #include <asm/domain.h>
 #include <asm/event.h>
 #include <asm/gic.h>
+#include <asm/gic_bench.h>
 #include <asm/gic_v3_defs.h>
 #include <asm/gic_v3_its.h>
 #include <asm/io.h>
 #include <asm/page.h>
 #include <asm/sysregs.h>
+
+#ifdef CONFIG_PERF_COUNTERS
+bool __ro_after_init opt_gic_bench_counters = false;
+boolean_param("gic_bench_counters", opt_gic_bench_counters);
+#endif
 
 /*
  * There could be a lot of LPIs on the host side, and they always go to
@@ -164,6 +170,8 @@ void vgic_vcpu_inject_lpi(struct domain *d, unsigned int virq)
     if ( vcpu_id >= d->max_vcpus )
           return;
 
+    /* A valid target lookup is an injection attempt, not proof of delivery. */
+    gic_bench_add(gb_sw_lpi_inject, !!d->vcpu[vcpu_id]);
     vgic_inject_irq(d, d->vcpu[vcpu_id], virq, true);
 }
 
@@ -206,7 +214,11 @@ void gicv3_do_LPI(unsigned int lpi)
 
     d = rcu_lock_domain_by_id(hlpi.dom_id);
     if ( !d )
+    {
+        if ( hlpi.db_vcpu_id != INVALID_VCPU_ID )
+            gic_bench_count(gb_db_invalid_target);
         goto out;
+    }
 
     /* It is a doorbell interrupt. */
     if ( hlpi.db_vcpu_id != INVALID_VCPU_ID )
@@ -219,6 +231,7 @@ void gicv3_do_LPI(unsigned int lpi)
 
         if ( hlpi.db_vcpu_id >= d->max_vcpus )
         {
+            gic_bench_count(gb_db_invalid_target);
             printk_once(XENLOG_WARNING
                         "Ignoring doorbell LPI %u for d%u with invalid vcpu%u\n",
                         lpi, d->domain_id, hlpi.db_vcpu_id);
@@ -227,15 +240,34 @@ void gicv3_do_LPI(unsigned int lpi)
 
         v = d->vcpu[hlpi.db_vcpu_id];
         if ( !v )
+        {
+            gic_bench_count(gb_db_invalid_target);
             goto unlock;
+        }
 
         vpe = v->arch.vgic.its_vpe;
         if ( !vpe )
         {
+            gic_bench_count(gb_db_invalid_target);
             printk_once(XENLOG_WARNING
                         "Ignoring doorbell LPI %u for d%u vcpu%u without VPE state\n",
                         lpi, d->domain_id, hlpi.db_vcpu_id);
             goto unlock;
+        }
+
+        /*
+         * Racy observations, not a scheduler-locked state or a wakeup result.
+         * Blocked takes precedence; "other" must not be called "runnable".
+         * Avoid these extra reads when diagnostics are disabled.
+         */
+        if ( gic_bench_enabled() )
+        {
+            if ( test_bit(_VPF_blocked, &v->pause_flags) )
+                gic_bench_count(gb_db_target_blocked);
+            else if ( ACCESS_ONCE(v->is_running) )
+                gic_bench_count(gb_db_target_running);
+            else
+                gic_bench_count(gb_db_target_other);
         }
 
         /*
