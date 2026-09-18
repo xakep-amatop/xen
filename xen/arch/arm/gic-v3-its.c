@@ -17,6 +17,7 @@
 #include <xen/sched.h>
 #include <xen/sizes.h>
 #include <asm/gic.h>
+#include <asm/gic_bench.h>
 #include <asm/gic_v3_defs.h>
 #include <asm/gic_v3_its.h>
 #include <asm/io.h>
@@ -170,6 +171,7 @@ static int its_send_command(struct host_its *hw_its, const void *its_cmd)
      */
     s_time_t deadline = NOW() + MILLISECS(1);
     uint64_t readp, writep;
+    unsigned int busy_polls __maybe_unused = 0;
     int ret = -EBUSY;
 
     /* No ITS commands from an interrupt handler (at the moment). */
@@ -187,6 +189,7 @@ static int its_send_command(struct host_its *hw_its, const void *its_cmd)
             break;
         }
 
+        ++busy_polls;
         /*
          * If the command queue is full, wait for a bit in the hope it drains
          * before giving up.
@@ -197,8 +200,10 @@ static int its_send_command(struct host_its *hw_its, const void *its_cmd)
         spin_lock(&hw_its->cmd_lock);
     } while ( NOW() <= deadline );
 
+    gic_bench_add(gb_its_full_polls, busy_polls);
     if ( ret )
     {
+        gic_bench_count(gb_its_full_timeout);
         spin_unlock(&hw_its->cmd_lock);
         if ( printk_ratelimit() )
             printk(XENLOG_WARNING "host ITS: command queue full.\n");
@@ -231,6 +236,7 @@ static int gicv3_its_wait_commands(struct host_its *hw_its)
      */
     s_time_t deadline = NOW() + MILLISECS(100);
     uint64_t readp, writep;
+    unsigned int busy_polls __maybe_unused = 0;
 
     do {
         spin_lock(&hw_its->cmd_lock);
@@ -239,12 +245,18 @@ static int gicv3_its_wait_commands(struct host_its *hw_its)
         spin_unlock(&hw_its->cmd_lock);
 
         if ( readp == writep )
+        {
+            gic_bench_add(gb_its_drain_polls, busy_polls);
             return 0;
+        }
 
+        ++busy_polls;
         cpu_relax();
         udelay(1);
     } while ( NOW() <= deadline );
 
+    gic_bench_add(gb_its_drain_polls, busy_polls);
+    gic_bench_count(gb_its_drain_timeout);
     return -ETIMEDOUT;
 }
 

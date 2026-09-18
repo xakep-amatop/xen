@@ -2,6 +2,14 @@
 /*#ifndef __XEN_PERFC_DEFN_H__*/
 /*#define __XEN_PERFC_DEFN_H__*/
 
+/*
+ * Keep this file lightweight: avoid pulling in GIC headers through perfc.h.
+ * ARM GIC has 16 SGIs.
+ */
+#ifndef NR_GIC_SGI
+#define NR_GIC_SGI 16
+#endif
+
 PERFCOUNTER(invalid_hypercalls, "invalid hypercalls")
 
 PERFCOUNTER(trap_wfi,      "trap: wfi")
@@ -49,6 +57,7 @@ PERFCOUNTER(vgic_sgi_list  ,            "vgic: SGI send to list")
 PERFCOUNTER(vgic_sgi_others,            "vgic: SGI send to others")
 PERFCOUNTER(vgic_sgi_self,              "vgic: SGI send to self")
 PERFCOUNTER(vgic_irq_migrates,          "vgic: irq migration")
+PERFCOUNTER_ARRAY(vgic_sgi_its,         "vgic: vSGI inject via ITS", NR_GIC_SGI)
 
 PERFCOUNTER(vuart_reads,  "vuart: read")
 PERFCOUNTER(vuart_writes, "vuart: write")
@@ -69,6 +78,8 @@ PERFCOUNTER(vtimer_virt_inject,   "vtimer: virt expired, injected")
 PERFCOUNTER(ppis,                 "#PPIs")
 PERFCOUNTER(spis,                 "#SPIs")
 PERFCOUNTER(guest_irqs,           "#GUEST-IRQS")
+PERFCOUNTER(lpi_traps,            "LPI: traps")
+PERFCOUNTER(lpi_doorbells,        "LPI: doorbell")
 
 PERFCOUNTER(hyp_timer_irqs,   "Hypervisor timer interrupts")
 PERFCOUNTER(virt_timer_irqs,  "Virtual timer interrupts")
@@ -76,6 +87,32 @@ PERFCOUNTER(maintenance_irqs, "Maintenance interrupts")
 
 PERFCOUNTER(atomics_guest,    "atomics: guest access")
 PERFCOUNTER(atomics_guest_paused,   "atomics: guest paused")
+
+/* Optional diagnostics, gated by gic_bench_counters (default false). */
+PERFCOUNTER(gb_sw_lpi_inject,      "GB: software LPI injection attempts")
+PERFCOUNTER(gb_db_target_blocked,  "GB: doorbell target observed blocked")
+PERFCOUNTER(gb_db_target_running,  "GB: doorbell target observed running")
+PERFCOUNTER(gb_db_target_other,    "GB: doorbell target observed other")
+PERFCOUNTER(gb_db_invalid_target,  "GB: doorbell invalid target")
+PERFCOUNTER(gb_its_full_polls,     "GB: ITS queue full observations")
+PERFCOUNTER(gb_its_full_timeout,   "GB: ITS queue full timeouts")
+PERFCOUNTER(gb_its_drain_polls,    "GB: ITS queue nonempty observations")
+PERFCOUNTER(gb_its_drain_timeout,  "GB: ITS queue drain timeouts")
+PERFCOUNTER(gb_vpe_load_ok,        "GB: vPE resident commits")
+PERFCOUNTER(gb_vpe_load_err,       "GB: vPE load errors")
+PERFCOUNTER(gb_vpe_put_db,         "GB: vPE nonresident need_db true")
+PERFCOUNTER(gb_vpe_put_nodb,       "GB: vPE nonresident need_db false")
+PERFCOUNTER(gb_vpe_put_err,        "GB: vPE put errors")
+PERFCOUNTER(gb_pendinglast_kick,   "GB: PendingLast kick calls")
+PERFCOUNTER(gb_vpe_move_ok,        "GB: vPE VMOVP submissions")
+PERFCOUNTER(gb_vpe_move_err,       "GB: vPE VMOVP failures")
+PERFCOUNTER(gb_db_move_err,        "GB: doorbell retarget failures")
+PERFCOUNTER(gb_dirty_busy_polls,   "GB: vPE Dirty busy observations")
+PERFCOUNTER(gb_dirty_timeout,      "GB: vPE Dirty timeouts")
+PERFCOUNTER(gb_valid_busy_polls,   "GB: vPE Valid busy observations")
+PERFCOUNTER(gb_valid_timeout,      "GB: vPE Valid timeouts")
+PERFCOUNTER(gb_syncr_busy_polls,   "GB: GICR SYNCR busy observations")
+PERFCOUNTER(gb_syncr_timeout,      "GB: GICR SYNCR timeouts")
 
 /*#endif*/ /* __XEN_PERFC_DEFN_H__ */
 

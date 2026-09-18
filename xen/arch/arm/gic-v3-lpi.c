@@ -17,11 +17,17 @@
 #include <asm/atomic.h>
 #include <asm/domain.h>
 #include <asm/gic.h>
+#include <asm/gic_bench.h>
 #include <asm/gic_v3_defs.h>
 #include <asm/gic_v3_its.h>
 #include <asm/io.h>
 #include <asm/page.h>
 #include <asm/sysregs.h>
+
+#ifdef CONFIG_PERF_COUNTERS
+bool __ro_after_init opt_gic_bench_counters = false;
+boolean_param("gic_bench_counters", opt_gic_bench_counters);
+#endif
 
 /*
  * There could be a lot of LPIs on the host side, and they always go to
@@ -145,6 +151,8 @@ void vgic_vcpu_inject_lpi(struct domain *d, unsigned int virq)
     if ( vcpu_id >= d->max_vcpus )
           return;
 
+    /* A valid target lookup is an injection attempt, not proof of delivery. */
+    gic_bench_add(gb_sw_lpi_inject, !!d->vcpu[vcpu_id]);
     vgic_inject_irq(d, d->vcpu[vcpu_id], virq, true);
 }
 
@@ -166,6 +174,7 @@ void gicv3_do_LPI(unsigned int lpi)
     union host_lpi *hlpip, hlpi;
 
     irq_enter();
+    perfc_incr(lpi_traps);
 
     /* EOI the LPI already. */
     WRITE_SYSREG(lpi, ICC_EOIR1_EL1);
