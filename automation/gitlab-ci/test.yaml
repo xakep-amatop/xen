@@ -573,6 +573,48 @@ qemu-smoke-dom0-arm64-gcc:
     - *arm64-test-needs
     - alpine-3.24-arm64-gcc
 
+arm-vtimer-compare:
+  extends: .test-jobs-common
+  variables:
+    CONTAINER: debian:13-x86_64
+    GIT_DEPTH: "0"
+  tags: [x86_64]
+  needs: []
+  script:
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - bash automation/scripts/arm-vtimer/compare.sh "$VTIMER_BASE_REV" "$CI_COMMIT_SHA"
+
+.qemu-arm64-vtimer:
+  extends: .qemu-arm64
+  artifacts:
+    paths:
+      - vtimer-results/
+    reports:
+      junit: vtimer-results/junit.xml
+    when: always
+
+qemu-arm64-vtimer-linux-debug:
+  extends: .qemu-arm64-vtimer
+  parallel:
+    matrix:
+      - LINUX_CASE: [before-control, after-control, after-irq]
+  script:
+    - bash automation/scripts/arm-vtimer/run.sh linux "$LINUX_CASE"
+  needs:
+    - *arm64-test-needs
+    - alpine-3.24-arm64-gcc-debug-vtimer
+
+qemu-arm64-vtimer-zephyr:
+  extends: .qemu-arm64-vtimer
+  parallel:
+    matrix:
+      - TIMER_MODE: [periodic, tickless]
+  script:
+    - bash automation/scripts/arm-vtimer/run.sh zephyr "$TIMER_MODE"
+  needs:
+    - alpine-3.24-arm64-gcc-debug-vtimer
+    - zephyr-4.5.0-arm64-vtimer
+
 qemu-smoke-dom0-arm64-gcc-debug:
   extends: .qemu-arm64
   script:

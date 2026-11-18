@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+set -eu
+
+/bin/busybox --install -s /bin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+uname -a
+
+# Keep the pinned vCPU runnable while the host pends the timer PPI.
+/bin/sh -c 'while :; do :; done' &
+burn=$!
+trap 'kill "$burn" 2>/dev/null || true' EXIT
+echo VTIMER_READY
+# Start the waits before injection. No guest input is needed after that.
+IFS= read -r token
+[ "$token" = VTIMER_GO ]
+echo VTIMER_MEASURE
+i=0
+while [ "$i" -lt 30 ]; do
+    sleep 0.1
+    echo VTIMER_TICK_$i
+    i=$((i + 1))
+done
+kill "$burn"
+trap - EXIT
+cat /proc/interrupts
+echo VTIMER_LINUX_PASS
+exec /bin/sh

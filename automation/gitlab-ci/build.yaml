@@ -428,6 +428,32 @@ alpine-3.24-arm64-gcc-debug-boot-selftest:
     EXTRA_XEN_CONFIG: |
       CONFIG_BOOT_SELFTEST=y
 
+zephyr-4.5.0-arm64-vtimer:
+  <<: *build-test
+  stage: build
+  image: ghcr.io/zephyrproject-rtos/ci-base:v0.29.4@sha256:0a4e08683a5582748696dd28d1633566be04218174811eb532e170a13e14959b
+  tags: [arm64]
+  needs: []
+  script:
+    - bash automation/scripts/arm-vtimer/build-zephyr.sh
+  artifacts:
+    paths:
+      - binaries/zephyr/
+
+alpine-3.24-arm64-gcc-debug-vtimer:
+  extends: .gcc-arm64-build-debug
+  <<: *build-test
+  variables:
+    CONTAINER: alpine:3.24-arm64v8
+    GIT_DEPTH: "0"
+    HYPERVISOR_ONLY: y
+    EXTRA_XEN_CONFIG: |
+      CONFIG_PERF_COUNTERS=y
+  script:
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - ./automation/scripts/build 2>&1 | tee build.log
+    - bash automation/scripts/arm-vtimer/build-before.sh "$VTIMER_BASE_REV"
+
 alpine-3.24-arm64-gcc-randconfig:
   extends: .gcc-arm64-build
   variables:

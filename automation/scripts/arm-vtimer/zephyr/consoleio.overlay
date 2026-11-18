@@ -1,0 +1,4 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+&xen_hvc {
+	compatible = "xen,hvc-consoleio";
+};

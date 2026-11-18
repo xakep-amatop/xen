@@ -1,0 +1,97 @@
+#!/usr/bin/env expect
+# SPDX-License-Identifier: GPL-2.0-only
+# Arguments: guest, IRQ count, timeout, register, mask, command.
+lassign $argv kind count limit address mask
+set command [lrange $argv 5 end]
+set timeout 0
+log_user 0
+log_file -noappend -a console.log
+match_max 8388608
+set input [open qtest.in r+]
+set output [open qtest.out r+]
+fconfigure $input -buffering line
+fconfigure $output -blocking 0
+set trace [open injections.log w]
+set text ""
+set sent 0
+set waiting 0
+set next 0
+set done_at 0
+set stopped ""
+set released 0
+set error ""
+set eof 0
+set started [clock milliseconds]
+set deadline [expr {$started + 1000 * $limit}]
+trap {set error "Interrupted"} {SIGINT SIGTERM}
+spawn -noecho {*}$command
+set pid [exp_pid]
+
+while {$error eq "" && !$eof} {
+    expect {
+        -re {(?s).+} { append text $expect_out(buffer) }
+        eof { set eof 1 }
+        timeout {}
+    }
+    set now [clock milliseconds]
+    if {[string length $text] > 8388608} { set error "Console limit exceeded"; break }
+    if {$waiting && [gets $output reply] >= 0} {
+        puts $trace "$sent\t$reply"
+        flush $trace
+        if {$reply ne "OK"} { set error "qtest rejected IRQ"; break }
+        incr sent
+        set waiting 0
+        set next [expr {$now + 10}]
+    }
+    set done [expr {[string first "VTIMER_LINUX_PASS" $text] >= 0 ||
+                    [string first "VTIMER_PROBE_FAIL" $text] >= 0 ||
+                    [string first "Kernel panic" $text] >= 0 ||
+                    [string first "VTIMER_PROBE_PASS" $text] >= 0}]
+    if {$done && $sent < $count} { set error "Guest finished before injection"; break }
+    if {$kind eq "linux" && !$released && [string first "VTIMER_READY" $text] >= 0} {
+        send -- "VTIMER_GO\r"
+        set released 1
+    }
+    set marker "VTIMER_READY"
+    if {$kind eq "linux"} { set marker "VTIMER_MEASURE" }
+    if {$next == 0 && [string first $marker $text] >= 0} {
+        set next [expr {$now + 150}]
+    }
+    if {!$done && $next > 0 && $now >= $next && $sent < $count && !$waiting} {
+        puts $input "writel $address $mask"
+        set waiting 1
+        set ack_deadline [expr {$now + 2000}]
+    }
+    if {$waiting && $now >= $ack_deadline} { set error "qtest timeout"; break }
+    if {$done && $done_at == 0} {
+        set done_at $now
+        send -- "\001\001\001p"
+    }
+    if {$done_at > 0 && $now - $done_at >= 2000} { break }
+    if {$now >= $deadline} { set error "Guest timeout"; break }
+    after 10
+}
+# Only accept a signal sent by this script. A crash after PASS still fails.
+if {!$eof} {
+    if {![catch {exec sh -c "kill -TERM $pid"}]} { set stopped "SIGTERM" }
+    expect -timeout 5 {
+        eof { set eof 1 }
+        timeout {
+            if {![catch {exec sh -c "kill -KILL $pid"}]} { set stopped "SIGKILL" }
+            expect eof
+        }
+    }
+}
+set status [wait]
+set record [open process.log w]
+puts $record "wait=$status stop=$stopped"
+close $record
+close $input
+close $output
+close $trace
+if {[lindex $status 2] != 0 ||
+    ([llength $status] > 4 && [lindex $status 5] ne $stopped) ||
+    ([llength $status] == 4 && [lindex $status 3] != 0)} {
+    set error "QEMU failed: $status"
+}
+if {$error ne ""} { puts stderr $error; exit 1 }
