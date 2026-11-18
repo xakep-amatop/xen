@@ -1,12 +1,11 @@
 #!/usr/bin/env expect
 # SPDX-License-Identifier: GPL-2.0-only
-# Arguments: guest, IRQ count, timeout, register, mask, command.
-lassign $argv kind count limit address mask
-set command [lrange $argv 5 end]
+# Arguments: guest, IRQ count, timeout, register, mask, selftest, command.
+lassign $argv kind count limit address mask selftest
+set command [lrange $argv 6 end]
 set timeout 0
 log_user 0
 log_file -noappend -a console.log
-match_max 8388608
 set input [open qtest.in r+]
 set output [open qtest.out r+]
 fconfigure $input -buffering line
@@ -19,13 +18,27 @@ set next 0
 set done_at 0
 set stopped ""
 set released 0
+set test_requested 0
 set error ""
 set eof 0
 set started [clock milliseconds]
 set deadline [expr {$started + 1000 * $limit}]
 trap {set error "Interrupted"} {SIGINT SIGTERM}
 spawn -noecho {*}$command
+match_max 8388608
 set pid [exp_pid]
+
+# Return once Xen has printed a complete counter line for this request.
+proc read_filter_count {} {
+    global spawn_id deadline
+    set timeout [expr {max(0, ($deadline - [clock milliseconds] + 999) / 1000)}]
+    send -- "\001\001\001p"
+    expect {
+        -re {\(XEN\) Virtual timer spurious interrupts[ \t]+TOTAL\[[ \t]*[0-9]+\][^\n]*\n} { return 1 }
+        eof { return 0 }
+        timeout { return 0 }
+    }
+}
 
 while {$error eq "" && !$eof} {
     expect {
@@ -43,14 +56,32 @@ while {$error eq "" && !$eof} {
         set waiting 0
         set next [expr {$now + 10}]
     }
-    set done [expr {[string first "VTIMER_LINUX_PASS" $text] >= 0 ||
+    set done [expr {[regexp {VTIMER_LINUX_PASS\r*\n} $text] ||
                     [string first "VTIMER_PROBE_FAIL" $text] >= 0 ||
                     [string first "Kernel panic" $text] >= 0 ||
                     [string first "VTIMER_PROBE_PASS" $text] >= 0}]
-    if {$done && $sent < $count} { set error "Guest finished before injection"; break }
-    if {$kind eq "linux" && !$released && [string first "VTIMER_READY" $text] >= 0} {
-        send -- "VTIMER_GO\r"
-        set released 1
+    if {$done && $sent + $waiting < $count} { set error "Guest finished before injection"; break }
+    if {$kind eq "linux" && !$released && [regexp {VTIMER_READY\r*\n} $text]} {
+        if {$selftest eq ""} {
+            if {$count > 0} {
+                if {![read_filter_count]} { set error "Missing initial Xen counter"; break }
+                send -- "\001\001\001"
+            }
+            send -- "VTIMER_GO\r"
+            set released 1
+        } elseif {!$test_requested} {
+            send -- "\001\001\001Y"
+            set test_requested 1
+        } elseif {[regexp {vtimer selftest (?:before|after) (?:PASS|FAIL)\r*\n} $text]} {
+            send -- "\001\001\001"
+            # Forward the model IRQs in order. Linux decides which wake it saw.
+            set events [regexp -all -inline -line {^\(XEN\) (VTIMER_MODEL_[^\r\n]*)\r*$} $text]
+            foreach {line event} $events {
+                send -- "$event\r"
+            }
+            send -- "VTIMER_GO\r"
+            set released 1
+        }
     }
     set marker "VTIMER_READY"
     if {$kind eq "linux"} { set marker "VTIMER_MEASURE" }
@@ -63,9 +94,13 @@ while {$error eq "" && !$eof} {
         set ack_deadline [expr {$now + 2000}]
     }
     if {$waiting && $now >= $ack_deadline} { set error "qtest timeout"; break }
-    if {$done && $done_at == 0} {
+    if {$done && !$waiting && $done_at == 0} {
         set done_at $now
-        send -- "\001\001\001p"
+        if {$count > 0} {
+            if {![read_filter_count]} { set error "Missing final Xen counter"; break }
+        } else {
+            send -- "\001\001\001p"
+        }
     }
     if {$done_at > 0 && $now - $done_at >= 2000} { break }
     if {$now >= $deadline} { set error "Guest timeout"; break }
@@ -74,7 +109,8 @@ while {$error eq "" && !$eof} {
 # Only accept a signal sent by this script. A crash after PASS still fails.
 if {!$eof} {
     if {![catch {exec sh -c "kill -TERM $pid"}]} { set stopped "SIGTERM" }
-    expect -timeout 5 {
+    expect {
+        -timeout 5
         eof { set eof 1 }
         timeout {
             if {![catch {exec sh -c "kill -KILL $pid"}]} { set stopped "SIGKILL" }
@@ -89,6 +125,7 @@ close $record
 close $input
 close $output
 close $trace
+if {$count > 0} { puts "QEMU acknowledged $sent/$count IRQ requests." }
 if {[lindex $status 2] != 0 ||
     ([llength $status] > 4 && [lindex $status 5] ne $stopped) ||
     ([llength $status] == 4 && [lindex $status 3] != 0)} {

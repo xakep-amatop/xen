@@ -6,7 +6,7 @@ variables:
   BUILD_FOR_TESTS_ONLY:
     description: "Include only build jobs necessary for running tests"
   VTIMER_BASE_REV:
-    description: "Commit before the Arm timer fix for the comparison and the Linux control."
+    description: "Commit before the Arm virtual timer fix."
     value: "d86a8d8276ebc229dc1e9b3b753e6e62a41307ee"
   ARTIFACTS_REPO:
     description: "Path to the test-artifacts repo"

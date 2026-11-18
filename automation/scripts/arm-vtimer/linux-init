@@ -13,9 +13,29 @@ uname -a
 burn=$!
 trap 'kill "$burn" 2>/dev/null || true' EXIT
 echo VTIMER_READY
-# Start the waits before injection. No guest input is needed after that.
-IFS= read -r token
-[ "$token" = VTIMER_GO ]
+# Count model IRQs the way the Arm timer driver checks ISTATUS.
+ignored=0
+wakes=0
+set --
+while :; do
+    IFS= read -r token || exit 1
+    case "$token" in
+        'VTIMER_MODEL_IRQ 0') ignored=$((ignored + 1)) ;;
+        'VTIMER_MODEL_IRQ 1') wakes=$((wakes + 1)) ;;
+        'VTIMER_MODEL_END control'|'VTIMER_MODEL_END early')
+            set -- "$@" "VTIMER_MODEL_RESULT ${token##* } ignored=$ignored wakes=$wakes"
+            ignored=0
+            wakes=0
+            ;;
+        VTIMER_GO) break ;;
+        *) exit 1 ;;
+    esac
+done
+[ "$ignored" -eq 0 ] && [ "$wakes" -eq 0 ] || exit 1
+# Print after GO so console input cannot split a result line.
+for result in "$@"; do
+    echo "$result"
+done
 echo VTIMER_MEASURE
 i=0
 while [ "$i" -lt 30 ]; do

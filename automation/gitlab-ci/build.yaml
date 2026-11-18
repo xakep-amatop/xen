@@ -451,6 +451,7 @@ alpine-3.24-arm64-gcc-debug-vtimer:
       CONFIG_PERF_COUNTERS=y
   script:
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - bash automation/scripts/arm-vtimer/prepare-handler.sh . xen/arch/arm after
     - ./automation/scripts/build 2>&1 | tee build.log
     - bash automation/scripts/arm-vtimer/build-before.sh "$VTIMER_BASE_REV"
 

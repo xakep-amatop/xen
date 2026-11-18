@@ -3,6 +3,7 @@
 set -euo pipefail
 
 here=$(cd -- "$(dirname -- "$0")" && pwd)
+root=$(git rev-parse --show-toplevel)
 base=$(git rev-parse --verify --end-of-options "${1:?Usage: compare.sh BASE [TIP]}^{commit}")
 tip=$(git rev-parse --verify --end-of-options "${2:-HEAD}^{commit}")
 git merge-base --is-ancestor "$base" "$tip" || { echo 'BASE must be an ancestor of TIP' >&2; exit 1; }
@@ -13,10 +14,8 @@ trap 'rm -r -- "$work"' EXIT
 check() {
     local side=$1 rev=$2
     echo "$side $rev"
-    git show "$rev:xen/arch/arm/include/asm/processor.h" |
-        sed -n '/^#define CNTx_CTL_/p' > "$work/handler.inc"
-    git show "$rev:xen/arch/arm/time.c" |
-        sed -n '/^static void vtimer_interrupt(/,/^}/p' >> "$work/handler.inc"
+    git -C "$root" archive "$rev" xen/arch/arm/{time.c,include/asm/processor.h} | tar -x -C "$work"
+    bash "$here/prepare-handler.sh" "$work" "$work"
     "${HOSTCC:-cc}" -std=c11 -Wall -Werror -I "$work" "$here/check-handler.c" -o "$work/check"
     "$work/check" "$side"
 }

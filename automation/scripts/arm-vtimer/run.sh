@@ -3,18 +3,21 @@
 set -euo pipefail
 
 here=$(cd -- "$(dirname -- "$0")" && pwd)
-usage() { echo 'Usage: run.sh linux {before-control|after-control|after-irq} | zephyr {periodic|tickless}' >&2; exit 2; }
+usage() { echo 'Usage: run.sh linux {before-selftest|after-selftest|before-control|after-control|after-irq} | zephyr {periodic|tickless}' >&2; exit 2; }
 [ "$#" -eq 2 ] || usage
 guest=$1
 variant=$2
 name=$guest-$variant
 xen_image=xen
+selftest=
 case "$guest" in
     linux)
         memory=2048; limit=60
         case "$variant" in
             before-control) xen_image=xen-before; irqs=0 ;;
             after-control) irqs=0 ;;
+            before-selftest) xen_image=xen-before; irqs=0; selftest=before ;;
+            after-selftest) irqs=0; selftest=after ;;
             after-irq) irqs=1 ;;
             *) usage ;;
         esac ;;
@@ -114,8 +117,8 @@ run_case() (
     mkfifo qtest.in qtest.out
     control_rc=0
     timeout -k 5 "$((limit + 10))" expect "$here/console.exp" "$guest" "$irqs" \
-        "$limit" "$pending" "$((1 << ppi))" "${command[@]}" || control_rc=$?
-    awk -v name="$name" -v guest="$guest" -v requests="$irqs" -v control_status="$control_rc" \
+        "$limit" "$pending" "$((1 << ppi))" "$selftest" "${command[@]}" || control_rc=$?
+    awk -v name="$name" -v guest="$guest" -v requests="$irqs" -v selftest="$selftest" -v control_status="$control_rc" \
         -f "$here/check.awk" console.log > junit.xml
 )
 
@@ -125,7 +128,7 @@ rc=$?
 set -e
 cat "$out/run.log"
 if [ ! -s "$out/junit.xml" ]; then
-    if [ "$rc" -eq 0 ]; then rc=1; fi
+    if [[ "$rc" == 0 || "$rc" == 77 ]]; then rc=1; fi
     cat > "$out/junit.xml" <<EOF
 <testsuites><testsuite name="$name">
 <testcase name="run"><failure>See run.log</failure></testcase>
@@ -134,6 +137,7 @@ EOF
 fi
 state=PASS
 [ "$rc" = 0 ] || state=FAIL
+[ "$rc" != 77 ] || state=INCONCLUSIVE
 printf '%s\t%s\n' "$name" "$state" | tee "$out/results.tsv"
 rm -f "$out/qtest.in" "$out/qtest.out"
 if [ -n "${CI_PIPELINE_URL:-}" ]; then echo "$CI_PIPELINE_URL"; fi

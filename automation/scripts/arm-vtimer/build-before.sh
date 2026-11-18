@@ -20,6 +20,7 @@ grep -qx 'CONFIG_PERF_COUNTERS=y' xen-config
 cp xen-config "$work/xen/.config"
 make -C "$work/xen" olddefconfig
 cmp xen-config "$work/xen/.config"
+bash "$(dirname "$0")/prepare-handler.sh" "$work" "$work/xen/arch/arm" before
 make -j"$(nproc)" -C "$work/xen"
 cp "$work/xen/xen" binaries/xen-before
 printf 'before %s\nafter %s\n' "$base" "$tip" | tee binaries/vtimer-revisions
